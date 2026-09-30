@@ -152,8 +152,8 @@ def translate_columns(df):
 def display_full_table(df_input, row_count=None):
     df = df_input.data if hasattr(df_input, "data") else df_input
 
-    # Container dengan scroll vertikal dan horizontal (max-height membuat tabel bisa di-scroll dengan header beku)
-    html = ['<div style="width: 100%; max-height: 72vh; overflow-y: auto; overflow-x: auto; margin-bottom: 0.6rem; border: 1px solid #334155; border-radius: 4px;">']
+    # Hapus batasan max-height dan overflow-y agar seluruh baris terbuka penuh tanpa scrollbar
+    html = ['<div style="width: 100%; overflow-x: auto; margin-bottom: 0.6rem; border: 1px solid #334155; border-radius: 4px;">']
     html.append(
         '<table style="width: 100%; border-collapse: separate; border-spacing: 0; '
         'font-family: -apple-system, BlinkMacSystemFont, sans-serif; '
