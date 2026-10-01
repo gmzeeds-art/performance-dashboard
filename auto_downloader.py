@@ -337,14 +337,22 @@ def push_to_github():
     print("\n[+] Menjalankan Git Push ke GitHub...")
     try:
         repo = git.Repo(BASE_DIR)
-        repo.git.add("-A", "rawdata")   # -A: file yang dihapus ikut tercatat
+
+        # 1. Hanya stage perubahan di folder rawdata
+        repo.git.add("-A", "rawdata")
+
+        # 2. Commit jika ada pembaruan file di rawdata
         if repo.git.status("--porcelain", "rawdata").strip():
             msg = f"Auto-update daily rawdata ({datetime.now():%Y-%m-%d %H:%M:%S})"
             repo.git.commit("-m", msg)
-            repo.git.push("origin", "HEAD")
-            print(" [OK] Berhasil push ke GitHub! File daily lama terhapus di GitHub.")
+            print(" -> Commit lokal berhasil dibuat.")
+
+            # 3. Push langsung ke origin main tanpa utak-atik folder profil browser
+            repo.git.push("origin", "HEAD:main")
+            print(" [OK] Berhasil push ke GitHub! Streamlit Cloud akan segera mengupdate data.")
         else:
-            print(" -> Tidak ada perubahan di rawdata.")
+            print(" -> Tidak ada perubahan file di rawdata.")
+
     except Exception as e:
         print(f" [!] Gagal push ke GitHub: {e}")
 
