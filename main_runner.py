@@ -349,36 +349,32 @@ def git_sync_and_push(target_folder, commit_msg):
     try:
         repo = git.Repo(BASE_DIR)
         
-        # 1. Bersihkan rebase menggantung jika pernah gagal
-        try:
-            repo.git.rebase("--abort")
-        except Exception:
-            pass
+        # 1. Bersihkan sisa direktori rebase jika ada
+        for bad_dir_name in ("rebase-merge", "rebase-apply"):
+            bad_dir = os.path.join(BASE_DIR, ".git", bad_dir_name)
+            if os.path.exists(bad_dir):
+                try:
+                    shutil.rmtree(bad_dir)
+                    print(f" -> Membersihkan folder macet: {bad_dir_name}")
+                except Exception:
+                    pass
 
-        # 2. Stage dan commit file lokal terlebih dahulu agar statusnya tidak untracked
+        # 2. Stage file target (misal: rawdata atau screenshots)
         repo.git.add("-A", target_folder)
+        
+        # 3. Buat commit lokal jika ada perubahan file
         if repo.git.status("--porcelain", target_folder).strip():
             repo.git.commit("-m", commit_msg)
             print(f" -> Commit lokal {target_folder} dibuat.")
+        else:
+            print(f" -> Tidak ada perubahan baru di folder {target_folder}.")
 
-        # 3. Pull dengan strategi autostash dan -X theirs agar tidak pernah bentrok
-        try:
-            repo.git.pull("origin", "main", "--rebase", "--autostash", "-X", "theirs")
-        except Exception as pe:
-            print(f" -> Catatan pull rebase: {pe}")
-            # Fallback jika rebase tetap menolak
-            repo.git.rebase("--abort")
-            repo.git.fetch("origin", "main")
-            repo.git.reset("--mixed", "origin/main")
-            repo.git.add("-A", target_folder)
-            if repo.git.status("--porcelain", target_folder).strip():
-                repo.git.commit("-m", commit_msg)
-
-        # 4. Push commit yang sudah sinkron
-        repo.git.push("origin", "HEAD:main")
+        # 4. Push dengan parameter --force agar tidak pernah tertahan non-fast-forward
+        repo.git.push("origin", "HEAD:main", "--force")
         print(f" [OK] {target_folder} berhasil di-push ke GitHub!")
         time.sleep(3)
         return True
+
     except Exception as e:
         print(f" [!] Gagal push Git ({target_folder}): {e}")
         return False
