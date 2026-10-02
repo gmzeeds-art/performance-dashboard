@@ -348,30 +348,29 @@ def git_sync_and_push(target_folder, commit_msg):
     print(f"\n[+] Sinkronisasi & Push Git ({target_folder})...")
     try:
         repo = git.Repo(BASE_DIR)
-        
-        # 1. Bersihkan sisa direktori rebase jika ada
-        for bad_dir_name in ("rebase-merge", "rebase-apply"):
-            bad_dir = os.path.join(BASE_DIR, ".git", bad_dir_name)
-            if os.path.exists(bad_dir):
-                try:
-                    shutil.rmtree(bad_dir)
-                    print(f" -> Membersihkan folder macet: {bad_dir_name}")
-                except Exception:
-                    pass
 
-        # 2. Stage file target (misal: rawdata atau screenshots)
-        repo.git.add("-A", target_folder)
-        
-        # 3. Buat commit lokal jika ada perubahan file
+        # 1. Selalu tarik (pull) perubahan dari GitHub terlebih dahulu agar file baru tidak hilang
+        try:
+            repo.git.pull("origin", "main", "--rebase", "-X", "theirs")
+        except Exception:
+            try:
+                repo.git.rebase("--abort")
+            except Exception:
+                pass
+
+        # 2. HANYA stage folder target (rawdata atau screenshots), TIDAK menyentuh app.py / data_karyawan
+        repo.git.add(target_folder)
+
+        # 3. Buat commit jika ada perubahan di folder tersebut
         if repo.git.status("--porcelain", target_folder).strip():
             repo.git.commit("-m", commit_msg)
             print(f" -> Commit lokal {target_folder} dibuat.")
         else:
             print(f" -> Tidak ada perubahan baru di folder {target_folder}.")
 
-        # 4. Push dengan parameter --force agar tidak pernah tertahan non-fast-forward
-        repo.git.push("origin", "HEAD:main", "--force")
-        print(f" [OK] {target_folder} berhasil di-push ke GitHub!")
+        # 4. Push normal TANPA --force agar tidak menimpa file master/app
+        repo.git.push("origin", "HEAD:main")
+        print(f" [OK] {target_folder} BERHASIL di-push ke GitHub!")
         time.sleep(3)
         return True
 
