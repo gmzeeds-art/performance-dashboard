@@ -352,21 +352,36 @@ for _, row in df_karyawan.iterrows():
     id_akun = normalize_clean(row.get("ID Pengguna", ""))
     nama_orang = normalize_clean(row.get("Nama Pengguna", ""))
     proj_val = normalize_clean(row.get(project_col, ""))
+    
+    # Normalisasi LD-BA agar langsung terhubung sebagai Project LD
+    if "LD" in proj_val:
+        proj_base = "LD"
+    elif "SK" in proj_val:
+        proj_base = "SK"
+    else:
+        proj_base = proj_val
+
     raw_status = row.get("Status Kerja", "")
 
     info = {
         "Nama TL": str(row.get(tl_col, "")).strip(),
         "Bucket": str(row.get(bucket_col, "")).strip(),
-        "Project": str(row.get(project_col, "")).strip(),
+        "Project": proj_base,
         "Status Kerja": map_status_kerja(raw_status),
         "ID_Akun_Resmi": str(row.get("ID Pengguna", "")).strip(),
         "Nama_Orang_Resmi": str(row.get("Nama Pengguna", "")).strip(),
     }
 
     # Kunci utama berbasis proyek agar ID yang sama di SK dan LD tidak tertukar
-    if id_akun and proj_val:
+    if id_akun and proj_base:
+        karyawan_dict[(id_akun, proj_base)] = info
+    if nama_orang and proj_base:
+        karyawan_dict[(nama_orang, proj_base)] = info
+
+    # Kunci sekunder jika terdapat data dengan penamaan asli
+    if id_akun and proj_val != proj_base:
         karyawan_dict[(id_akun, proj_val)] = info
-    if nama_orang and proj_val:
+    if nama_orang and proj_val != proj_base:
         karyawan_dict[(nama_orang, proj_val)] = info
 
     # Kunci cadangan (fallback)
@@ -378,10 +393,13 @@ for _, row in df_karyawan.iterrows():
 master_rules = []
 if df_master is not None and not df_master.empty:
     for _, r in df_master.iterrows():
+        m_p = normalize_clean(r.get("Project", ""))
+        # Normalisasi aturan master LD-BA ke LD
+        m_p_clean = "LD" if "LD" in m_p else ("SK" if "SK" in m_p else m_p)
         master_rules.append({
             "tl": normalize_clean(r.get("Nama TL", "")),
             "bucket": normalize_clean(r.get("Bucket", "")),
-            "project": normalize_clean(r.get("Project", "")),
+            "project": m_p_clean,
             "perusahaan_master": str(r.get("Perusahaan", "")).strip(),
         })
 
@@ -389,7 +407,7 @@ if df_master is not None and not df_master.empty:
 def get_master_status(tl, bucket, project):
     t_clean = normalize_clean(tl)
     b_clean = normalize_clean(bucket)
-    p_clean = normalize_clean(project)
+    p_clean = "LD" if "LD" in normalize_clean(project) else ("SK" if "SK" in normalize_clean(project) else normalize_clean(project))
 
     for rule in master_rules:
         m_proj = (rule["project"] == "") or (rule["project"] == p_clean)
@@ -502,7 +520,7 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
             "Total Penerimaan Hari Ini_Total": rec_mtd + rec_daily,
         }
 
-        # Wajib: Masukkan kolom metrik operasional harian & MTD agar tidak KeyError
+        # Masukkan seluruh kolom operasional harian & MTD agar tidak memicu KeyError
         for m in METRIC_AVG_COLS:
             row_item[f"{m}_Daily"] = d_vals.get(m, 0.0)
             row_item[f"{m}_MTD"] = m_vals.get(m, 0.0)
@@ -551,6 +569,7 @@ def build_dual_tables(df_subset, group_col_name, label_entity):
             "Recovery Rate (Monthly)": f"{rec_rate_monthly:.2f}%",
         })
 
+        # Seluruh agen yang memiliki data di rawdata harian dihitung penuh
         daily_pen = group["Total Penambahan Hari Ini_Daily"].sum()
         daily_rec = group["Total Penerimaan Hari Ini_Daily"].sum()
         rec_rate_daily = (daily_rec / daily_pen * 100) if daily_pen > 0 else 0.0
@@ -750,24 +769,25 @@ with tab_perf_agent:
                     "Recovery Rate (%)": f"{rate_m:.2f}%",
                 })
 
-                if st_kerja == "Aktif":
-                    pen_d = r["Total Penambahan Hari Ini_Daily"]
-                    rec_d = r["Total Penerimaan Hari Ini_Daily"]
-                    rate_d = (rec_d / pen_d * 100) if pen_d > 0 else 0.0
+                # Masukkan seluruh agen yang memiliki transaksi di rawdata harian tanpa terpotong status resign
+                pen_d = r["Total Penambahan Hari Ini_Daily"]
+                rec_d = r["Total Penerimaan Hari Ini_Daily"]
+                rate_d = (rec_d / pen_d * 100) if pen_d > 0 else 0.0
 
-                    rows_d.append({
-                        "ID Agent": r.get("ID Agent", ""),
-                        "Nama Pengguna": r.get("Nama Pengguna", ""),
-                        "_daily_pen": pen_d,
-                        "Penambahan (Hari Ini)": format_num(pen_d, is_currency=True),
-                        "Penerimaan (Hari Ini)": format_num(rec_d, is_currency=True),
-                        "_rate_num": rate_d,
-                        "Recovery Rate (Hari Ini)": f"{rate_d:.2f}%",
-                        "Jumlah Panggilan": f"{r['Jumlah Panggilan_Daily']:.2f}",
-                        "Waktu Kerja Rata-rata": f"{r['Waktu Kerja Rata-rata_Daily']:.2f}",
-                        "Jumlah SMS": f"{r['Jumlah SMS_Daily']:.2f}",
-                        "Jumlah Pengiriman Template WABA": f"{r['Jumlah Pengiriman Template WABA_Daily']:.2f}",
-                    })
+                rows_d.append({
+                    "ID Agent": r.get("ID Agent", ""),
+                    "Nama Pengguna": r.get("Nama Pengguna", ""),
+                    "Status Kerja": st_kerja,
+                    "_daily_pen": pen_d,
+                    "Penambahan (Hari Ini)": format_num(pen_d, is_currency=True),
+                    "Penerimaan (Hari Ini)": format_num(rec_d, is_currency=True),
+                    "_rate_num": rate_d,
+                    "Recovery Rate (Hari Ini)": f"{rate_d:.2f}%",
+                    "Jumlah Panggilan": f"{r['Jumlah Panggilan_Daily']:.2f}",
+                    "Waktu Kerja Rata-rata": f"{r['Waktu Kerja Rata-rata_Daily']:.2f}",
+                    "Jumlah SMS": f"{r['Jumlah SMS_Daily']:.2f}",
+                    "Jumlah Pengiriman Template WABA": f"{r['Jumlah Pengiriman Template WABA_Daily']:.2f}",
+                })
 
             df_am = pd.DataFrame(rows_m)
             if not df_am.empty:
@@ -810,7 +830,7 @@ with tab_perf_agent:
                 df_ad["Gap"] = gaps_d
                 df_ad["Gap Amount"] = gaps_amt_d
                 df_ad["Rank"] = [f"#{i+1}" for i in range(total_nd)]
-                cols_ad = ["Rank", "ID Agent", "Nama Pengguna", "Penambahan (Hari Ini)", "Penerimaan (Hari Ini)", "Recovery Rate (Hari Ini)", "Gap", "Gap Amount", "Jumlah Panggilan", "Waktu Kerja Rata-rata", "Jumlah SMS", "Jumlah Pengiriman Template WABA"]
+                cols_ad = ["Rank", "ID Agent", "Nama Pengguna", "Status Kerja", "Penambahan (Hari Ini)", "Penerimaan (Hari Ini)", "Recovery Rate (Hari Ini)", "Gap", "Gap Amount", "Jumlah Panggilan", "Waktu Kerja Rata-rata", "Jumlah SMS", "Jumlah Pengiriman Template WABA"]
                 df_ad = df_ad[cols_ad]
 
             col_left, col_right = st.columns([1, 1], gap="small")
@@ -818,7 +838,7 @@ with tab_perf_agent:
                 st.markdown('<div class="sub-table-header header-bulanan">Agent Bulanan (月度坐席绩效)</div>', unsafe_allow_html=True)
                 display_full_table(translate_columns(df_am))
             with col_right:
-                st.markdown('<div class="sub-table-header header-harian">Agent Harian - Aktif (今日在职坐席实时绩效)</div>', unsafe_allow_html=True)
+                st.markdown('<div class="sub-table-header header-harian">Agent Harian (今日实时绩效)</div>', unsafe_allow_html=True)
                 display_full_table(translate_columns(df_ad))
 
         for ag_tab, (ag_label, b_filter, p_filter) in zip(ag_sub_tabs, TARGET_BUCKETS):
@@ -921,7 +941,6 @@ with tab_final:
 all_period_records = {}
 for p_code in all_final_periods:
     m_label = f"Bln {p_code[:2]}"
-    # Teruskan parameter p_code agar aturan non-kompetisi September konsisten
     df_p_proc = process_performance_data(final_dict[p_code], [], periode_label=p_code)
     if not df_p_proc.empty:
         all_period_records[m_label] = df_p_proc[df_p_proc["Apakah Ikut Berkompetisi"] == "Ya"].copy()
