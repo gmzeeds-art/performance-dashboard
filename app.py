@@ -284,7 +284,6 @@ def read_excel_standard(file_path):
         df = pd.read_excel(file_path)
         df.columns = [str(c).strip() for c in df.columns]
         
-        # Deteksi asal proyek dari nama file (SK atau LD)
         fname = os.path.basename(file_path).upper()
         detected_proj = ""
         if "_SK" in fname or "-SK" in fname or " SK" in fname:
@@ -351,38 +350,30 @@ karyawan_dict = {}
 for _, row in df_karyawan.iterrows():
     id_akun = normalize_clean(row.get("ID Pengguna", ""))
     nama_orang = normalize_clean(row.get("Nama Pengguna", ""))
-    proj_val = normalize_clean(row.get(project_col, ""))
-    
-    # Normalisasi LD-BA agar langsung terhubung sebagai Project LD
-    if "LD" in proj_val:
-        proj_base = "LD"
-    elif "SK" in proj_val:
-        proj_base = "SK"
-    else:
-        proj_base = proj_val
-
+    proj_exact = str(row.get(project_col, "")).strip().upper()
     raw_status = row.get("Status Kerja", "")
 
     info = {
         "Nama TL": str(row.get(tl_col, "")).strip(),
         "Bucket": str(row.get(bucket_col, "")).strip(),
-        "Project": proj_base,
+        "Project": proj_exact,  # Tetap pertahankan Project asli (LD-BA tetap LD-BA, LD tetap LD)
         "Status Kerja": map_status_kerja(raw_status),
         "ID_Akun_Resmi": str(row.get("ID Pengguna", "")).strip(),
         "Nama_Orang_Resmi": str(row.get("Nama Pengguna", "")).strip(),
     }
 
-    # Kunci utama berbasis proyek agar ID yang sama di SK dan LD tidak tertukar
-    if id_akun and proj_base:
-        karyawan_dict[(id_akun, proj_base)] = info
-    if nama_orang and proj_base:
-        karyawan_dict[(nama_orang, proj_base)] = info
+    # Kunci presisi dengan nama project di Excel
+    if id_akun and proj_exact:
+        karyawan_dict[(id_akun, proj_exact)] = info
+    if nama_orang and proj_exact:
+        karyawan_dict[(nama_orang, proj_exact)] = info
 
-    # Kunci sekunder jika terdapat data dengan penamaan asli
-    if id_akun and proj_val != proj_base:
-        karyawan_dict[(id_akun, proj_val)] = info
-    if nama_orang and proj_val != proj_base:
-        karyawan_dict[(nama_orang, proj_val)] = info
+    # Jika agen adalah LD-BA, izinkan juga ditemukan saat rawdata terbaca LD
+    if "LD" in proj_exact:
+        if id_akun and (id_akun, "LD") not in karyawan_dict:
+            karyawan_dict[(id_akun, "LD")] = info
+        if nama_orang and (nama_orang, "LD") not in karyawan_dict:
+            karyawan_dict[(nama_orang, "LD")] = info
 
     # Kunci cadangan (fallback)
     if id_akun and id_akun not in karyawan_dict:
@@ -393,13 +384,10 @@ for _, row in df_karyawan.iterrows():
 master_rules = []
 if df_master is not None and not df_master.empty:
     for _, r in df_master.iterrows():
-        m_p = normalize_clean(r.get("Project", ""))
-        # Normalisasi aturan master LD-BA ke LD
-        m_p_clean = "LD" if "LD" in m_p else ("SK" if "SK" in m_p else m_p)
         master_rules.append({
             "tl": normalize_clean(r.get("Nama TL", "")),
             "bucket": normalize_clean(r.get("Bucket", "")),
-            "project": m_p_clean,
+            "project": normalize_clean(r.get("Project", "")),
             "perusahaan_master": str(r.get("Perusahaan", "")).strip(),
         })
 
@@ -407,7 +395,7 @@ if df_master is not None and not df_master.empty:
 def get_master_status(tl, bucket, project):
     t_clean = normalize_clean(tl)
     b_clean = normalize_clean(bucket)
-    p_clean = "LD" if "LD" in normalize_clean(project) else ("SK" if "SK" in normalize_clean(project) else normalize_clean(project))
+    p_clean = normalize_clean(project)
 
     for rule in master_rules:
         m_proj = (rule["project"] == "") or (rule["project"] == p_clean)
@@ -481,7 +469,7 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
         m_vals = mtd_map.get((acc_key, proj_key), {})
         d_vals = daily_map.get((acc_key, proj_key), {})
 
-        # Cocokkan identitas agen berdasarkan ID dan Proyek
+        # Cari info karyawan: jika di database terdaftar LD-BA, project_val akan bernilai "LD-BA"
         k_info = karyawan_dict.get((acc_key, proj_key)) or {}
         if not k_info:
             alt_id = normalize_clean(d_vals.get("_raw_nama", "") or m_vals.get("_raw_nama", ""))
@@ -489,6 +477,7 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
 
         tl_val = k_info.get("Nama TL", "Unknown")
         bucket_val = k_info.get("Bucket", "Unknown")
+        # Project mengambil identitas dari master (misal: "LD-BA") jika ada
         project_val = k_info.get("Project", proj_key or "Unknown")
         status_val = k_info.get("Status Kerja", "Aktif")
 
@@ -520,7 +509,6 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
             "Total Penerimaan Hari Ini_Total": rec_mtd + rec_daily,
         }
 
-        # Masukkan seluruh kolom operasional harian & MTD agar tidak memicu KeyError
         for m in METRIC_AVG_COLS:
             row_item[f"{m}_Daily"] = d_vals.get(m, 0.0)
             row_item[f"{m}_MTD"] = m_vals.get(m, 0.0)
@@ -569,7 +557,7 @@ def build_dual_tables(df_subset, group_col_name, label_entity):
             "Recovery Rate (Monthly)": f"{rec_rate_monthly:.2f}%",
         })
 
-        # Seluruh agen yang memiliki data di rawdata harian dihitung penuh
+        # Semua agen yang memiliki aktivitas di rawdata harian dihitung penuh
         daily_pen = group["Total Penambahan Hari Ini_Daily"].sum()
         daily_rec = group["Total Penerimaan Hari Ini_Daily"].sum()
         rec_rate_daily = (daily_rec / daily_pen * 100) if daily_pen > 0 else 0.0
@@ -631,12 +619,13 @@ def build_dual_tables(df_subset, group_col_name, label_entity):
 
 
 # ---------------------------------------------------------
-# FUNGSI RENDER PERFORMANCE DENGAN DUA TABEL
+# TARGET BUCKETS (DENGAN SUBTAB MANDIRI S1 - LD-BA)
 # ---------------------------------------------------------
 TARGET_BUCKETS = [
     ("S1 - SK", "S1", "SK"),
     ("D0 - SK", "D0", "SK"),
     ("S1 - LD", "S1", "LD"),
+    ("S1 - LD-BA", "S1", "LD-BA"),  # Sub-tab khusus untuk LD-BA
     ("S0 - LD", "S0", "LD"),
     ("Semua Bucket", None, None),
 ]
@@ -769,7 +758,7 @@ with tab_perf_agent:
                     "Recovery Rate (%)": f"{rate_m:.2f}%",
                 })
 
-                # Masukkan seluruh agen yang memiliki transaksi di rawdata harian tanpa terpotong status resign
+                # Masukkan seluruh agen yang ada di raw data harian tanpa memotong status resign
                 pen_d = r["Total Penambahan Hari Ini_Daily"]
                 rec_d = r["Total Penerimaan Hari Ini_Daily"]
                 rate_d = (rec_d / pen_d * 100) if pen_d > 0 else 0.0
@@ -904,10 +893,18 @@ with tab_final:
             df_res["Ranking"] = [f"#{i+1}" for i in range(len(df_res))]
             return df_res[["Project", "Bucket", "Perusahaan", "Recovery Rate", "Ranking"]]
 
-        target_groups = [("SK", "D0"), ("SK", "S1"), ("LD", "S0"), ("LD", "S1")]
+        target_groups = [("SK", "D0"), ("SK", "S1"), ("LD", "S0"), ("LD", "S1"), ("LD-BA", "S1")]
         period_keys = list(periods_data.keys())
 
         for proj, buck in target_groups:
+            # Periksa apakah ada data untuk project dan bucket ini
+            has_data = any(
+                not periods_data[k][(periods_data[k]["Project"] == proj) & (periods_data[k]["Bucket"] == buck)].empty
+                for k in period_keys
+            )
+            if not has_data:
+                continue
+
             st.markdown(
                 f'<div class="clean-group-title">'
                 f'Project (项目): {proj} &nbsp;|&nbsp; Bucket (阶段): {buck}'
