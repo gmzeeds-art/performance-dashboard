@@ -1169,3 +1169,5 @@ with tab_tl_history:
 
             df_hist_tl_trans = translate_columns(df_hist_tl)
             display_full_table(df_hist_tl_trans, len(df_hist_tl_trans))
+
+            
