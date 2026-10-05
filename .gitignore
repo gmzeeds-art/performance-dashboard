@@ -1,0 +1,6 @@
+~$*.xlsx
+browser_profile/
+temp_downloads/
+captcha_debug/
+__pycache__/
+*.pyc
