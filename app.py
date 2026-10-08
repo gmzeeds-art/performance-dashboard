@@ -322,8 +322,8 @@ def scan_rawdata_files(folder_path):
     all_files = glob.glob(os.path.join(folder_path, "*.xlsx")) + glob.glob(os.path.join(folder_path, "*.xls"))
     final_files = {}
     mtd_files = []
-    daily_files = []
-    wl_files = {}  # Format: {'1-7': [file_sk, file_ld], '8-14': [...]}
+    raw_daily_files = []
+    wl_files = {}
 
     for f in all_files:
         clean_name = os.path.basename(f).upper()
@@ -339,7 +339,17 @@ def scan_rawdata_files(folder_path):
         elif "MTD" in clean_name:
             mtd_files.append(f)
         else:
-            daily_files.append(f)
+            raw_daily_files.append(f)
+
+    # Pastikan HANYA mengambil file harian terbaru untuk SK dan LD
+    daily_files = []
+    sk_dailies = sorted([f for f in raw_daily_files if "SK" in os.path.basename(f).upper()], key=os.path.getmtime)
+    ld_dailies = sorted([f for f in raw_daily_files if "LD" in os.path.basename(f).upper()], key=os.path.getmtime)
+
+    if sk_dailies:
+        daily_files.append(sk_dailies[-1])  # Ambil yang paling baru
+    if ld_dailies:
+        daily_files.append(ld_dailies[-1])  # Ambil yang paling baru
 
     return final_files, mtd_files, daily_files, wl_files
 
