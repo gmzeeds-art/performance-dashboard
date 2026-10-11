@@ -466,17 +466,27 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
             id_m = normalize_clean(r.get("Nama Pengguna", ""))
             nm_m = normalize_clean(r.get("Nama", ""))
             p_src = normalize_clean(r.get("_source_project", ""))
-            vals = {
-                "Total Penambahan Hari Ini": clean_numeric(r.get("Total Penambahan Hari Ini", 0)),
-                "Total Penerimaan Hari Ini": clean_numeric(r.get("Total Penerimaan Hari Ini", 0)),
-                "_raw_id": str(r.get("Nama Pengguna", "")).strip(),
-                "_raw_nama": str(r.get("Nama", "")).strip(),
-                "_proj": p_src,
-            }
-            for m in METRIC_AVG_COLS:
-                vals[m] = clean_numeric(r.get(m, 0))
-            if id_m: mtd_map[(id_m, p_src)] = vals
-            if nm_m: mtd_map[(nm_m, p_src)] = vals
+            
+            pen_val = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
+            rec_val = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
+
+            key = (id_m or nm_m, p_src)
+            if key not in mtd_map:
+                mtd_map[key] = {
+                    "Total Penambahan Hari Ini": pen_val,
+                    "Total Penerimaan Hari Ini": rec_val,
+                    "_raw_id": str(r.get("Nama Pengguna", "")).strip(),
+                    "_raw_nama": str(r.get("Nama", "")).strip(),
+                    "_proj": p_src,
+                }
+                for m in METRIC_AVG_COLS:
+                    mtd_map[key][m] = clean_numeric(r.get(m, 0))
+            else:
+                # AKUMULASIKAN PENAMBAHAN & PENERIMAAN (JANGAN DITIMPA)
+                mtd_map[key]["Total Penambahan Hari Ini"] += pen_val
+                mtd_map[key]["Total Penerimaan Hari Ini"] += rec_val
+                for m in METRIC_AVG_COLS:
+                    mtd_map[key][m] = (mtd_map[key][m] + clean_numeric(r.get(m, 0))) / 2.0
 
     all_keys = set()
     for _, r in df_mtd_all.iterrows():
