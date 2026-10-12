@@ -318,13 +318,12 @@ def scan_rawdata_files(folder_path):
             wl_key = m_wl.group(1)
             wl_files.setdefault(wl_key, []).append(f)
         elif m_start_digits:
+            # File bulanan final murni (misal: 092026-SK.xlsx, 092026-LD.xlsx)
             periode = m_start_digits.group(1)
             final_files.setdefault(periode, []).append(f)
         elif "MTD" in clean_name:
+            # File MTD berjalan (JANGAN dimasukkan ke final_files agar tidak terakumulasi ganda)
             raw_mtd_files.append(f)
-            m_digits = re.search(r"(\d{6})", clean_name)
-            if m_digits:
-                final_files.setdefault(m_digits.group(1), []).append(f)
         else:
             raw_daily_files.append(f)
 
