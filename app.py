@@ -305,11 +305,9 @@ def read_excel_standard(file_path):
 def scan_rawdata_files(folder_path):
     all_files = glob.glob(os.path.join(folder_path, "*.xlsx")) + glob.glob(os.path.join(folder_path, "*.xls"))
     final_files = {}
-    mtd_files = []
+    raw_mtd_files = []
     raw_daily_files = []
     wl_files = {}
-
-    cur_period_str = datetime.now().strftime("%m%Y")  # Contoh: "102026"
 
     for f in all_files:
         clean_name = os.path.basename(f).upper()
@@ -320,30 +318,29 @@ def scan_rawdata_files(folder_path):
             wl_key = m_wl.group(1)
             wl_files.setdefault(wl_key, []).append(f)
         elif m_start_digits:
-            # File final lampau berawalan angka (misal: 092026-SK.xlsx)
             periode = m_start_digits.group(1)
             final_files.setdefault(periode, []).append(f)
         elif "MTD" in clean_name:
+            raw_mtd_files.append(f)
             m_digits = re.search(r"(\d{6})", clean_name)
-            # Jika memuat label bulan lampau yang bukan bulan ini, masukkan ke final
-            if m_digits and m_digits.group(1) != cur_period_str:
+            if m_digits:
                 final_files.setdefault(m_digits.group(1), []).append(f)
-            else:
-                # File MTD bulan berjalan
-                mtd_files.append(f)
         else:
             raw_daily_files.append(f)
 
-    daily_files = []
-    sk_dailies = sorted(
-        [f for f in raw_daily_files if "SK" in os.path.basename(f).upper()],
-        key=lambda x: os.path.basename(x).upper()
-    )
-    ld_dailies = sorted(
-        [f for f in raw_daily_files if "LD" in os.path.basename(f).upper()],
-        key=lambda x: os.path.basename(x).upper()
-    )
+    # Ambil file MTD paling akhir untuk SK dan LD
+    mtd_files = []
+    sk_mtd = sorted([f for f in raw_mtd_files if "SK" in os.path.basename(f).upper()], key=lambda x: os.path.basename(x).upper())
+    ld_mtd = sorted([f for f in raw_mtd_files if "LD" in os.path.basename(f).upper()], key=lambda x: os.path.basename(x).upper())
+    if sk_mtd:
+        mtd_files.append(sk_mtd[-1])
+    if ld_mtd:
+        mtd_files.append(ld_mtd[-1])
 
+    # Ambil file harian paling akhir untuk SK dan LD
+    daily_files = []
+    sk_dailies = sorted([f for f in raw_daily_files if "SK" in os.path.basename(f).upper()], key=lambda x: os.path.basename(x).upper())
+    ld_dailies = sorted([f for f in raw_daily_files if "LD" in os.path.basename(f).upper()], key=lambda x: os.path.basename(x).upper())
     if sk_dailies:
         daily_files.append(sk_dailies[-1])
     if ld_dailies:
