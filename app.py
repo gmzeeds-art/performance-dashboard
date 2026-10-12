@@ -4,7 +4,6 @@ import re
 from datetime import datetime
 import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
 
 # ---------------------------------------------------------
 # KONFIGURASI HALAMAN
@@ -83,10 +82,12 @@ RAWDATA_DIR = os.path.join(BASE_DIR, "rawdata")
 MASTER_FILE = os.path.join(BASE_DIR, "data_karyawan.xlsx")
 os.makedirs(RAWDATA_DIR, exist_ok=True)
 
+
 # ---------------------------------------------------------
 # DICTIONARY TRANSLASI JUDUL KOLOM KE MANDARIN (DENGAN <br>)
 # ---------------------------------------------------------
 HEADER_TRANSLATIONS = {
+    # Umum & Karyawan
     "ID Pengguna": "ID Pengguna<br>(用户ID)",
     "Nama Pengguna": "Nama Pengguna<br>(用户名)",
     "Perusahaan": "Perusahaan<br>(公司)",
@@ -97,6 +98,8 @@ HEADER_TRANSLATIONS = {
     "Hiredate": "Hiredate<br>(入职日期)",
     "Project": "Project<br>(项目)",
     "Apakah Ikut Berkompetisi": "Ikut Kompetisi<br>(是否参赛)",
+    
+    # Leaderboard & Tabel
     "Rank": "Rank<br>(排名)",
     "Ranking": "Ranking<br>(排名)",
     "Ranking (Avg)": "Ranking Avg<br>(平均排名)",
@@ -104,6 +107,8 @@ HEADER_TRANSLATIONS = {
     "Nama TL": "Nama TL<br>(组长姓名)",
     "ID Agent": "ID Agent<br>(坐席工号)",
     "Total Agent": "Total Agent<br>(总坐席数)",
+    
+    # Metrik Keuangan
     "Total Penambahan (Monthly)": "Total Penambahan (M)<br>(月累计新增本金)",
     "Total Penerimaan (Monthly)": "Total Penerimaan (M)<br>(月累计回款总额)",
     "Total Penambahan (Periode)": "Penambahan (Periode)<br>(周期新增本金)",
@@ -116,10 +121,14 @@ HEADER_TRANSLATIONS = {
     "Penambahan (Hari Ini)": "Penambahan (Today)<br>(今日新增本金)",
     "Penerimaan (Hari Ini)": "Penerimaan (Today)<br>(今日回款总额)",
     "Recovery Rate (Hari Ini)": "Recovery Rate (Today)<br>(今日催回率)",
+    
+    # Warning Letter
     "Status WL": "Status WL<br>(警告信状态)",
     "Peringkat di Bucket": "Rank / Total<br>(组内排名/总数)",
     "Persentil Rank": "Persentil<br>(排名百分比)",
     "Periode Evaluasi": "Periode<br>(考核周期)",
+    
+    # Metrik Operasional Harian
     "Jumlah Panggilan": "Panggilan<br>(呼叫次数)",
     "Jumlah Panggilan (Avg)": "Panggilan (Avg)<br>(平均呼叫次数)",
     "Waktu Kerja Rata-rata": "Waktu Kerja<br>(平均工作时长)",
@@ -128,10 +137,13 @@ HEADER_TRANSLATIONS = {
     "Jumlah SMS (Avg)": "SMS (Avg)<br>(平均短信量)",
     "Jumlah Pengiriman Template WABA": "Template WABA<br>(WABA模板发送量)",
     "Jumlah Pengiriman Template WABA (Avg)": "Template WABA (Avg)<br>(平均WABA发送量)",
+    
+    # Rekam Jejak
     "Status TL": "Status TL<br>(组长状态)",
     "Rata-rata Rate (All-Time)": "Avg Rate (All-Time)<br>(历史平均催回率)",
     "Analisis Kinerja": "Analisis Kinerja<br>(绩效分析)",
 }
+
 
 def translate_columns(df):
     new_cols = {}
@@ -147,8 +159,9 @@ def translate_columns(df):
                 new_cols[c] = c
     return df.rename(columns=new_cols)
 
+
 # ---------------------------------------------------------
-# RENDER TABEL RESPONSIVE, AUTO WRAP & FREEZE HEADER
+# FUNGSI RENDER TABEL RESPONSIVE, AUTO WRAP & FREEZE HEADER
 # ---------------------------------------------------------
 def display_full_table(df_input, row_count=None):
     df = df_input.data if hasattr(df_input, "data") else df_input
@@ -193,6 +206,7 @@ def display_full_table(df_input, row_count=None):
     html.append('</tbody></table></div>')
     st.markdown("".join(html), unsafe_allow_html=True)
 
+
 # ---------------------------------------------------------
 # HELPER PARSER & FORMATTER
 # ---------------------------------------------------------
@@ -206,6 +220,7 @@ def clean_numeric(val):
     except ValueError:
         return 0.0
 
+
 def format_num(val, is_currency=False):
     if pd.isna(val) or val == 0:
         return "0"
@@ -213,10 +228,12 @@ def format_num(val, is_currency=False):
         return f"{int(round(val)):,}".replace(",", ".")
     return f"{val:,.2f}".rstrip("0").rstrip(".") if isinstance(val, float) else str(val)
 
+
 def normalize_clean(val):
     if pd.isna(val):
         return ""
     return " ".join(str(val).strip().upper().split())
+
 
 def map_status_kerja(st_raw):
     s = str(st_raw).strip().lower()
@@ -225,6 +242,7 @@ def map_status_kerja(st_raw):
     elif "aktif" in s or "istirahat" in s:
         return "Aktif"
     return "Resign" if s != "" and s != "nan" else "-"
+
 
 def get_ranking_interval(rank, total):
     if total <= 0:
@@ -245,10 +263,10 @@ def get_ranking_interval(rank, total):
     else:
         return "BOTTOM20%"
 
+
 # ---------------------------------------------------------
-# 1. LOAD DATABASE KARYAWAN & TAB MASTER (DENGAN CACHE)
+# 1. LOAD DATABASE KARYAWAN & TAB MASTER
 # ---------------------------------------------------------
-@st.cache_data(ttl=300, show_spinner=False)
 def load_database_and_master(file_path):
     if not os.path.exists(file_path):
         return None, None
@@ -268,14 +286,15 @@ def load_database_and_master(file_path):
         st.error(f"Error membaca database: {e}")
         return None, None
 
+
 # ---------------------------------------------------------
-# 2. SCAN & BACA FILE RAWDATA (DENGAN CACHE)
+# 2. SCAN & BACA FILE RAWDATA (TERMASUK FILE WARNING LETTER)
 # ---------------------------------------------------------
 METRIC_SUM_COLS = ["Total Penambahan Hari Ini", "Total Penerimaan Hari Ini"]
 METRIC_AVG_COLS = ["Jumlah Panggilan", "Waktu Kerja Rata-rata", "Jumlah SMS", "Jumlah Pengiriman Template WABA"]
 ALL_METRICS = METRIC_SUM_COLS + METRIC_AVG_COLS
 
-@st.cache_data(ttl=300, show_spinner=False)
+
 def read_excel_standard(file_path):
     try:
         df = pd.read_excel(file_path)
@@ -298,6 +317,7 @@ def read_excel_standard(file_path):
     except Exception:
         return pd.DataFrame()
 
+
 def scan_rawdata_files(folder_path):
     all_files = glob.glob(os.path.join(folder_path, "*.xlsx")) + glob.glob(os.path.join(folder_path, "*.xls"))
     final_files = {}
@@ -307,36 +327,32 @@ def scan_rawdata_files(folder_path):
 
     for f in all_files:
         clean_name = os.path.basename(f).upper()
-        m_periode = re.search(r"(\d{6})", clean_name)
+        m_final = re.match(r"^(\d{6})[-_].*", clean_name)
         m_wl = re.match(r"^(\d+-\d+)[-_ ]?.*", clean_name)
 
-        if m_wl:
+        if m_final:
+            periode = m_final.group(1)
+            final_files.setdefault(periode, []).append(f)
+        elif m_wl:
             wl_key = m_wl.group(1)
             wl_files.setdefault(wl_key, []).append(f)
-        elif m_periode:
-            periode = m_periode.group(1)
-            final_files.setdefault(periode, []).append(f)
         elif "MTD" in clean_name:
             mtd_files.append(f)
         else:
             raw_daily_files.append(f)
 
+    # Pastikan HANYA mengambil file harian terbaru untuk SK dan LD
     daily_files = []
-    sk_dailies = sorted(
-        [f for f in raw_daily_files if "SK" in os.path.basename(f).upper()],
-        key=lambda x: os.path.basename(x).upper()
-    )
-    ld_dailies = sorted(
-        [f for f in raw_daily_files if "LD" in os.path.basename(f).upper()],
-        key=lambda x: os.path.basename(x).upper()
-    )
+    sk_dailies = sorted([f for f in raw_daily_files if "SK" in os.path.basename(f).upper()], key=os.path.getmtime)
+    ld_dailies = sorted([f for f in raw_daily_files if "LD" in os.path.basename(f).upper()], key=os.path.getmtime)
 
     if sk_dailies:
-        daily_files.append(sk_dailies[-1])
+        daily_files.append(sk_dailies[-1])  # Ambil yang paling baru
     if ld_dailies:
-        daily_files.append(ld_dailies[-1])
+        daily_files.append(ld_dailies[-1])  # Ambil yang paling baru
 
     return final_files, mtd_files, daily_files, wl_files
+
 
 # ---------------------------------------------------------
 # PROSES UTAMA
@@ -349,7 +365,6 @@ with col_h1:
     st.markdown("### **Performance Collection Automation (催收绩效自动化系统)**")
 with col_h2:
     if st.button("Refresh Data (刷新数据)", use_container_width=True):
-        st.cache_data.clear()
         st.rerun()
 
 if df_karyawan is None:
@@ -360,7 +375,9 @@ tl_col = "Nama TL" if "Nama TL" in df_karyawan.columns else "Perusahaan"
 bucket_col = "Bucket" if "Bucket" in df_karyawan.columns else "Bucket"
 project_col = "Project" if "Project" in df_karyawan.columns else "Project"
 
-# Mapping Database Karyawan
+# ---------------------------------------------------------
+# MAPPING DATABASE KARYAWAN DENGAN SISTEM SILANG & PROJECT
+# ---------------------------------------------------------
 karyawan_dict = {}
 for _, row in df_karyawan.iterrows():
     id_akun = normalize_clean(row.get("ID Pengguna", ""))
@@ -403,6 +420,7 @@ if df_master is not None and not df_master.empty:
             "perusahaan_master": str(r.get("Perusahaan", "")).strip(),
         })
 
+
 def get_master_status(tl, bucket, project):
     t_clean = normalize_clean(tl)
     b_clean = normalize_clean(bucket)
@@ -417,6 +435,7 @@ def get_master_status(tl, bucket, project):
             return "Ya", rule["perusahaan_master"]
 
     return "Tidak", "Non-Kompetisi"
+
 
 def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
     if not mtd_file_list and not daily_file_list:
@@ -447,44 +466,32 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
             id_m = normalize_clean(r.get("Nama Pengguna", ""))
             nm_m = normalize_clean(r.get("Nama", ""))
             p_src = normalize_clean(r.get("_source_project", ""))
-            
-            pen_val = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
-            rec_val = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
-
-            acc_id = id_m if id_m else nm_m
-            if not acc_id:
-                continue
-
-            k_tuple = (acc_id, p_src)
-            if k_tuple not in mtd_map:
-                mtd_map[k_tuple] = {
-                    "Total Penambahan Hari Ini": pen_val,
-                    "Total Penerimaan Hari Ini": rec_val,
-                    "_raw_id": str(r.get("Nama Pengguna", "")).strip(),
-                    "_raw_nama": str(r.get("Nama", "")).strip(),
-                    "_proj": p_src,
-                    "_count": 1
-                }
-                for m in METRIC_AVG_COLS:
-                    mtd_map[k_tuple][m] = clean_numeric(r.get(m, 0))
-            else:
-                mtd_map[k_tuple]["Total Penambahan Hari Ini"] += pen_val
-                mtd_map[k_tuple]["Total Penerimaan Hari Ini"] += rec_val
-                mtd_map[k_tuple]["_count"] += 1
-                for m in METRIC_AVG_COLS:
-                    mtd_map[k_tuple][m] += clean_numeric(r.get(m, 0))
-
-        for k_tuple in mtd_map:
-            cnt = mtd_map[k_tuple]["_count"]
-            if cnt > 1:
-                for m in METRIC_AVG_COLS:
-                    mtd_map[k_tuple][m] /= cnt
+            vals = {
+                "Total Penambahan Hari Ini": clean_numeric(r.get("Total Penambahan Hari Ini", 0)),
+                "Total Penerimaan Hari Ini": clean_numeric(r.get("Total Penerimaan Hari Ini", 0)),
+                "_raw_id": str(r.get("Nama Pengguna", "")).strip(),
+                "_raw_nama": str(r.get("Nama", "")).strip(),
+                "_proj": p_src,
+            }
+            for m in METRIC_AVG_COLS:
+                vals[m] = clean_numeric(r.get(m, 0))
+            if id_m: mtd_map[(id_m, p_src)] = vals
+            if nm_m: mtd_map[(nm_m, p_src)] = vals
 
     all_keys = set()
-    for (k_id, p_src) in mtd_map.keys():
-        all_keys.add((k_id, p_src))
-    for (k_id, p_src) in daily_map.keys():
-        all_keys.add((k_id, p_src))
+    for _, r in df_mtd_all.iterrows():
+        p_src = normalize_clean(r.get("_source_project", ""))
+        k_id = normalize_clean(r.get("Nama Pengguna", ""))
+        k_nm = normalize_clean(r.get("Nama", ""))
+        if k_id: all_keys.add((k_id, p_src))
+        elif k_nm: all_keys.add((k_nm, p_src))
+
+    for _, r in df_daily_all.iterrows():
+        p_src = normalize_clean(r.get("_source_project", ""))
+        k_id = normalize_clean(r.get("Nama Pengguna", ""))
+        k_nm = normalize_clean(r.get("Nama", ""))
+        if k_id: all_keys.add((k_id, p_src))
+        elif k_nm: all_keys.add((k_nm, p_src))
 
     records = []
     for (acc_key, proj_key) in all_keys:
@@ -536,6 +543,7 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
 
     return pd.DataFrame(records)
 
+
 df_active_performance = process_performance_data(mtd_files, daily_files)
 
 df_karyawan_status = df_karyawan.copy()
@@ -546,8 +554,9 @@ k_comp_res = df_karyawan_status.apply(
 )
 df_karyawan_status["Apakah Ikut Berkompetisi"] = k_comp_res
 
+
 # ---------------------------------------------------------
-# DUAL TABLES HELPER
+# HELPER HITUNG DUA TABEL (BULANAN & HARIAN)
 # ---------------------------------------------------------
 def build_dual_tables(df_subset, group_col_name, label_entity):
     rows_monthly = []
@@ -633,6 +642,10 @@ def build_dual_tables(df_subset, group_col_name, label_entity):
 
     return df_m, df_d
 
+
+# ---------------------------------------------------------
+# TARGET BUCKETS
+# ---------------------------------------------------------
 TARGET_BUCKETS = [
     ("S1 - SK", "S1", "SK"),
     ("D0 - SK", "D0", "SK"),
@@ -641,6 +654,7 @@ TARGET_BUCKETS = [
     ("S0 - LD", "S0", "LD"),
     ("Semua Bucket", None, None),
 ]
+
 
 def render_performance_with_tabs(df_source, group_col_name, label_entity):
     if df_source.empty:
@@ -683,8 +697,9 @@ def render_performance_with_tabs(df_source, group_col_name, label_entity):
                             continue
                         render_bucket_dual_tables(b_df, f"Project: {p} &nbsp;|&nbsp; Bucket: {b} ({len(b_df)} Total Agent)")
 
+
 # ---------------------------------------------------------
-# WARNING LETTER HELPER
+# HELPER LOGIKA WARNING LETTER (AGENT & TL)
 # ---------------------------------------------------------
 def get_tl_wl_cutoff(total_teams):
     if total_teams <= 1:
@@ -698,7 +713,12 @@ def get_tl_wl_cutoff(total_teams):
     else:
         return total_teams // 2
 
+
 def calculate_warning_letter_data(df_period_all, periode_name=""):
+    """
+    Menghitung Warning Letter untuk Agent (Bottom 30%) dan TL (Bottom N).
+    Kompetitor lain ikut merangking pembagi, namun yang di-output HANYA MPT05.
+    """
     if df_period_all.empty:
         return pd.DataFrame(), pd.DataFrame()
 
@@ -709,7 +729,9 @@ def calculate_warning_letter_data(df_period_all, periode_name=""):
     wl_agents = []
     wl_tls = []
 
+    # Kelompokkan per Project dan Bucket
     for (p, b), grp in df_comp.groupby(["Project", "Bucket"]):
+        # ----------------- 1. WL AGENT (Bottom 30%) -----------------
         grp_ag = grp.copy()
         grp_ag["_tot_pen"] = grp_ag["Total Penambahan Hari Ini_Total"]
         grp_ag["_tot_rec"] = grp_ag["Total Penerimaan Hari Ini_Total"]
@@ -723,11 +745,13 @@ def calculate_warning_letter_data(df_period_all, periode_name=""):
             rank_ag = idx + 1
             pct_ag = rank_ag / total_ag if total_ag > 0 else 1.0
 
+            # Kriteria: Masuk Bottom 30% dari total agen di bucket
             if pct_ag > 0.70:
                 perush = str(row_ag.get("Perusahaan", "")).upper()
                 tl_nm = str(row_ag.get("Nama TL", "")).upper()
                 id_ag = str(row_ag.get("ID Agent", "")).upper()
 
+                # HANYA TAMPILKAN JIKA DARI MPT05
                 if "MPT05" in perush or "MPT05" in tl_nm or "MPT05" in id_ag:
                     wl_agents.append({
                         "Periode Evaluasi": periode_name,
@@ -746,6 +770,7 @@ def calculate_warning_letter_data(df_period_all, periode_name=""):
                         "Status WL": "⚠️ WL AGENT",
                     })
 
+        # ----------------- 2. WL TEAM LEADER (Bottom N) -----------------
         tl_list = []
         for tl_name, tl_group in grp.groupby("Nama TL"):
             t_pen = tl_group["Total Penambahan Hari Ini_Total"].sum()
@@ -768,13 +793,16 @@ def calculate_warning_letter_data(df_period_all, periode_name=""):
             total_teams = len(df_tl_rank)
             cutoff = get_tl_wl_cutoff(total_teams)
 
+            # Tim terbawah sebanyak cutoff
             if cutoff > 0:
                 bottom_tls = df_tl_rank.tail(cutoff)
                 for _, row_tl in bottom_tls.iterrows():
                     tl_nm = str(row_tl.get("Nama TL", "")).upper()
                     perush = str(row_tl.get("Perusahaan", "")).upper()
 
+                    # HANYA TAMPILKAN JIKA DARI MPT05
                     if "MPT05" in tl_nm or "MPT05" in perush:
+                        # Cari rank asli
                         actual_rank = df_tl_rank[df_tl_rank["Nama TL"] == row_tl["Nama TL"]].index[0] + 1
                         wl_tls.append({
                             "Periode Evaluasi": periode_name,
@@ -793,17 +821,16 @@ def calculate_warning_letter_data(df_period_all, periode_name=""):
 
     return pd.DataFrame(wl_agents), pd.DataFrame(wl_tls)
 
+
 # ---------------------------------------------------------
-# TAB UTAMA DASHBOARD
+# TABS UTAMA DASHBOARD
 # ---------------------------------------------------------
-tab_karyawan, tab_perf_team, tab_perf_comp, tab_perf_agent, tab_final, tab_chart_final, tab_productivity, tab_wl, tab_mpt_history, tab_tl_history = st.tabs([
+tab_karyawan, tab_perf_team, tab_perf_comp, tab_perf_agent, tab_final, tab_wl, tab_mpt_history, tab_tl_history = st.tabs([
     "Seluruh Karyawan",
     "Performance Team",
     "Performance Perusahaan",
     "Agent Performance",
     "Data Bulanan Final",
-    "📈 Grafik Performa Perusahaan",
-    "🎯 Produktivitas Harian Agen",
     "Warning Letter",
     "Rekam Jejak Agen MPT05",
     "Rekam Jejak TL MPT05",
@@ -971,24 +998,25 @@ with tab_perf_agent:
                                 continue
                             render_agent_dual_tables(b_df, f"Project: {p} &nbsp;|&nbsp; Bucket: {b} ({len(b_df)} Total Agent)")
 
+
 # =========================================================
 # TAB 5: DATA BULANAN FINAL
 # =========================================================
-all_final_periods = sorted(final_dict.keys())
-periods_data = {}
-
-for p_code in all_final_periods:
-    month_label = f"Bulan {p_code[:2]}/{p_code[2:]} ({p_code[2:]}年{int(p_code[:2])}月份)"
-    df_p_proc = process_performance_data(final_dict[p_code], [], periode_label=p_code)
-    if not df_p_proc.empty:
-        df_p_comp = df_p_proc[df_p_proc["Apakah Ikut Berkompetisi"] == "Ya"].copy()
-        periods_data[month_label] = df_p_comp
-
-if not comp_agents.empty:
-    periods_data["MTD Berjalan (当月至今)"] = comp_agents.copy()
-
 with tab_final:
     st.caption("Perbandingan Recovery Rate dan Ranking antar Perusahaan bersebelahan (Bulan 7, 8, dan 9 MTD).")
+
+    all_final_periods = sorted(final_dict.keys())
+    periods_data = {}
+
+    for p_code in all_final_periods:
+        month_label = f"Bulan {p_code[:2]}/{p_code[2:]} ({p_code[2:]}年{int(p_code[:2])}月份)"
+        df_p_proc = process_performance_data(final_dict[p_code], [], periode_label=p_code)
+        if not df_p_proc.empty:
+            df_p_comp = df_p_proc[df_p_proc["Apakah Ikut Berkompetisi"] == "Ya"].copy()
+            periods_data[month_label] = df_p_comp
+
+    if not comp_agents.empty:
+        periods_data["MTD Berjalan (当月至今)"] = comp_agents.copy()
 
     if not periods_data:
         st.info("Belum ada file bulanan final.")
@@ -1051,342 +1079,40 @@ with tab_final:
                             display_full_table(tbl_comp_trans)
             st.write("")
 
-# =========================================================
-# TAB 6: GRAFIK PERFORMA PERUSAHAAN (SESUAI IMAGE 1)
-# =========================================================
-with tab_chart_final:
-    st.caption("Visualisasi Tren Kenaikan & Penurunan Recovery Rate Antar Perusahaan per Divisi/Bucket (月度催收机构趋势图)")
-
-    if not periods_data:
-        st.info("Belum ada data bulanan final untuk ditampilkan dalam grafik.")
-    else:
-        target_groups = [("SK", "D0"), ("SK", "S1"), ("LD", "S0"), ("LD", "S1"), ("LD-BA", "S1")]
-        period_keys = list(periods_data.keys())
-
-        short_labels = []
-        for pk in period_keys:
-            if "MTD" in pk:
-                short_labels.append("MTD Berjalan")
-            else:
-                m_match = re.search(r"(\d{2})", pk)
-                short_labels.append(f"Bln {m_match.group(1)}" if m_match else pk)
-
-        line_colors = ["#2563eb", "#ea580c", "#16a34a", "#dc2626", "#9333ea", "#0891b2", "#d97706"]
-
-        for proj, buck in target_groups:
-            has_data = any(
-                not periods_data[k][(periods_data[k]["Project"] == proj) & (periods_data[k]["Bucket"] == buck)].empty
-                for k in period_keys
-            )
-            if not has_data:
-                continue
-
-            all_companies = set()
-            for pk in period_keys:
-                df_slice = periods_data[pk][(periods_data[pk]["Project"] == proj) & (periods_data[pk]["Bucket"] == buck)]
-                for comp in df_slice["Perusahaan"].dropna().unique():
-                    if comp and comp != "Non-Kompetisi":
-                        all_companies.add(comp)
-
-            sorted_companies = sorted(list(all_companies))
-            if not sorted_companies:
-                continue
-
-            company_rates = {c: [] for c in sorted_companies}
-            for c in sorted_companies:
-                for pk in period_keys:
-                    df_slice = periods_data[pk][(periods_data[pk]["Project"] == proj) & (periods_data[pk]["Bucket"] == buck) & (periods_data[pk]["Perusahaan"] == c)]
-                    if not df_slice.empty:
-                        pen = df_slice["Total Penambahan Hari Ini_Total"].sum()
-                        rec = df_slice["Total Penerimaan Hari Ini_Total"].sum()
-                        rate = (rec / pen * 100.0) if pen > 0 else 0.0
-                    else:
-                        rate = 0.0
-                    company_rates[c].append(rate)
-
-            fig, ax = plt.subplots(figsize=(9, 4.8), dpi=130)
-            table_cells = []
-            row_labels = []
-
-            for idx, c in enumerate(sorted_companies):
-                vals = company_rates[c]
-                clr = line_colors[idx % len(line_colors)]
-                
-                ax.plot(short_labels, vals, marker="o", markersize=6, linewidth=2.8, label=c, color=clr)
-
-                for x_idx, y_val in enumerate(vals):
-                    if y_val > 0:
-                        ax.text(
-                            x_idx,
-                            y_val + 0.35,
-                            f"{y_val:.2f}%".replace(".", ","),
-                            ha="center",
-                            va="bottom",
-                            fontsize=9,
-                            fontweight="bold",
-                            color="#1e293b",
-                        )
-
-                table_cells.append([f"{v:.2f}%".replace(".", ",") if v > 0 else "-" for v in vals])
-                row_labels.append(c)
-
-            chart_title = f"{proj} - {buck}"
-            ax.set_title(chart_title, fontsize=13, fontweight="bold", pad=14, color="#0f172a")
-            ax.set_ylabel("Recovery Rate", fontsize=10, fontweight="bold")
-            ax.grid(axis="y", linestyle="--", alpha=0.5, color="#94a3b8")
-            ax.tick_params(axis="x", labelsize=10)
-
-            all_vals = [v for vals in company_rates.values() for v in vals if v > 0]
-            if all_vals:
-                min_y = max(0, min(all_vals) - 4)
-                max_y = max(all_vals) + 5
-                ax.set_ylim(min_y, max_y)
-
-            cell_table = ax.table(
-                cellText=table_cells,
-                rowLabels=row_labels,
-                colLabels=short_labels,
-                loc="bottom",
-                bbox=[0.0, -0.42, 1.0, 0.30]
-            )
-            cell_table.auto_set_font_size(False)
-            cell_table.set_fontsize(8.5)
-            cell_table.scale(1, 1.25)
-            plt.subplots_adjust(bottom=0.32)
-
-            st.pyplot(fig)
-            plt.close(fig)
-            st.markdown("---")
 
 # =========================================================
-# TAB 7: PRODUKTIVITAS HARIAN AGEN (MPT05 DAILY PRODUCTIVITY)
-# =========================================================
-with tab_productivity:
-    st.markdown("### 🎯 **Produktivitas Harian Agen MPT05 (Agent Daily Productivity)**")
-    st.caption("Monitoring performa operasional dan pencapaian target harian agen MPT05 dari data daily terbaru.")
-
-    TARGET_KEYS = ["D0 - SK", "S1 - SK", "S1 - LD", "S1 - LD-BA", "S0 - LD"]
-    
-    with st.expander("⚙️ **Atur Target Manual per Divisi / Bucket (Klik untuk Buka/Tutup)**", expanded=False):
-        st.info("💡 Masukkan target minimum untuk masing-masing metrik. Jika hasil harian agen berada di bawah target, sel angka akan berwarna merah.")
-        
-        target_configs = {}
-        for b_name in TARGET_KEYS:
-            st.markdown(f"**Divisi: `{b_name}`**")
-            c1, c2, c3, c4, c5, c6 = st.columns(6)
-            with c1:
-                t_call = st.number_input("Target Call", min_value=0, value=300, step=10, key=f"t_call_{b_name}")
-            with c2:
-                t_work = st.number_input("Waktu Kerja (Jam)", min_value=0.0, value=8.0, step=0.5, key=f"t_work_{b_name}")
-            with c3:
-                t_cov_call = st.number_input("Tutup Call (%)", min_value=0.0, max_value=100.0, value=80.0, step=5.0, key=f"t_covcall_{b_name}")
-            with c4:
-                t_cov_sms = st.number_input("Tutup SMS (%)", min_value=0.0, max_value=200.0, value=95.0, step=5.0, key=f"t_covsms_{b_name}")
-            with c5:
-                t_waba = st.number_input("Target WABA", min_value=0, value=0, step=5, key=f"t_waba_{b_name}")
-            with c6:
-                t_rec = st.number_input("Target Rec Rate (%)", min_value=0.0, max_value=100.0, value=15.0, step=1.0, key=f"t_rec_{b_name}")
-                
-            target_configs[b_name] = {
-                "call": t_call,
-                "work": t_work,
-                "cov_call": t_cov_call,
-                "cov_sms": t_cov_sms,
-                "waba": t_waba,
-                "rec_rate": t_rec
-            }
-            st.write("")
-
-    if not daily_files:
-        st.warning("Belum ada file data harian (daily) di folder rawdata.")
-    else:
-        daily_dfs_prod = []
-        for f in daily_files:
-            try:
-                df_temp = pd.read_excel(f)
-                df_temp.columns = [str(c).strip() for c in df_temp.columns]
-                fname = os.path.basename(f).upper()
-                proj_detected = "SK" if "SK" in fname else ("LD" if "LD" in fname else "")
-                df_temp["_source_project"] = proj_detected
-                daily_dfs_prod.append(df_temp)
-            except Exception:
-                pass
-
-        if not daily_dfs_prod:
-            st.info("Tidak dapat memuat berkas daily.")
-        else:
-            df_daily_raw = pd.concat(daily_dfs_prod, ignore_index=True)
-
-            agent_productivity_list = []
-            for _, r in df_daily_raw.iterrows():
-                id_raw = str(r.get("Nama Pengguna", "")).strip()
-                nm_raw = str(r.get("Nama", "")).strip()
-                proj_src = r.get("_source_project", "")
-
-                id_clean = normalize_clean(id_raw)
-                nm_clean = normalize_clean(nm_raw)
-
-                k_info = karyawan_dict.get((id_clean, proj_src)) or karyawan_dict.get((nm_clean, proj_src)) or karyawan_dict.get(id_clean) or karyawan_dict.get(nm_clean) or {}
-                
-                tl_name = k_info.get("Nama TL", "Unknown")
-                bucket_name = k_info.get("Bucket", "Unknown")
-                proj_name = k_info.get("Project", proj_src)
-                perusahaan_name = k_info.get("Perusahaan", "")
-
-                is_mpt05 = ("MPT05" in tl_name.upper()) or ("MPT05" in id_clean) or ("MPT05" in perusahaan_name.upper())
-                if not is_mpt05:
-                    continue
-
-                pen_hari_ini = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
-                rec_hari_ini = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
-                rec_rate = (rec_hari_ini / pen_hari_ini * 100.0) if pen_hari_ini > 0 else 0.0
-
-                jml_calls = clean_numeric(r.get("Jumlah Panggilan", 0))
-                work_time = clean_numeric(r.get("Waktu Kerja Rata-rata", 0))
-                cov_call = clean_numeric(r.get("Tingkat Penutupan Panggilan", 0))
-                cov_sms = clean_numeric(r.get("Tingkat Penutupan SMS", 0))
-                waba_sent = clean_numeric(r.get("Jumlah Pengiriman Template WABA", 0))
-
-                agent_productivity_list.append({
-                    "Project": proj_name,
-                    "Bucket": bucket_name,
-                    "Nama TL": tl_name,
-                    "ID Agent": k_info.get("ID_Akun_Resmi", id_raw),
-                    "Nama Pengguna": k_info.get("Nama_Orang_Resmi", nm_raw),
-                    "Status Kerja": k_info.get("Status Kerja", "Aktif"),
-                    "Calls": jml_calls,
-                    "Work_Time": work_time,
-                    "Cov_Call": cov_call,
-                    "Cov_SMS": cov_sms,
-                    "WABA": waba_sent,
-                    "Penambahan": pen_hari_ini,
-                    "Penerimaan": rec_hari_ini,
-                    "Rec_Rate": rec_rate,
-                })
-
-            df_prod_all = pd.DataFrame(agent_productivity_list)
-
-            if df_prod_all.empty:
-                st.info("Tidak ada agen MPT05 yang ditemukan pada data harian hari ini.")
-            else:
-                for tl_team, group in df_prod_all.groupby("Nama TL"):
-                    first_item = group.iloc[0]
-                    p_code = first_item["Project"]
-                    b_code = first_item["Bucket"]
-
-                    div_key = f"{b_code} - {p_code}"
-                    if div_key not in target_configs:
-                        div_key = next((k for k in target_configs if b_code in k and p_code in k), TARGET_KEYS[0])
-
-                    tg = target_configs.get(div_key, {"call": 300, "work": 8.0, "cov_call": 80.0, "cov_sms": 95.0, "waba": 0, "rec_rate": 15.0})
-
-                    st.markdown(
-                        f"""
-                        <div style="background-color: #1e3a1e; color: #86efac; padding: 7px 14px; border-radius: 6px; font-weight: bold; font-size: 1rem; margin-top: 15px; margin-bottom: 8px;">
-                            👥 Team: {tl_team} &nbsp;|&nbsp; Divisi: {div_key} &nbsp;(Target Call: {tg['call']} | Waktu: {tg['work']} Jam | SMS: {tg['cov_sms']}%)
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-
-                    html_tbl = [
-                        '<div style="width: 100%; overflow-x: auto; margin-bottom: 1.2rem; border: 1px solid #334155; border-radius: 4px;">',
-                        '<table style="width: 100%; border-collapse: separate; border-spacing: 0; font-family: -apple-system, sans-serif; font-size: 0.82rem; text-align: center;">',
-                        '<thead><tr>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">No</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">ID Agent</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Nama Agent</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Calls (Panggilan)</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Waktu Kerja (Jam)</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Tutup Call (%)</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Tutup SMS (%)</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Template WABA</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Penambahan</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Penerimaan</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px;">Recovery Rate</th>',
-                        '</tr></thead><tbody>'
-                    ]
-
-                    group_sorted = group.sort_values(by="Rec_Rate", ascending=False).reset_index(drop=True)
-
-                    for idx, row in group_sorted.iterrows():
-                        c_call = "color: #ef4444; font-weight: bold;" if row["Calls"] < tg["call"] else "color: inherit;"
-                        c_work = "color: #ef4444; font-weight: bold;" if row["Work_Time"] < tg["work"] else "color: inherit;"
-                        c_covcall = "color: #ef4444; font-weight: bold;" if row["Cov_Call"] < tg["cov_call"] else "color: inherit;"
-                        c_covsms = "color: #ef4444; font-weight: bold;" if row["Cov_SMS"] < tg["cov_sms"] else "color: inherit;"
-                        c_waba = "color: #ef4444; font-weight: bold;" if row["WABA"] < tg["waba"] else "color: inherit;"
-                        c_rec = "color: #ef4444; font-weight: bold;" if row["Rec_Rate"] < tg["rec_rate"] else "color: inherit;"
-
-                        html_tbl.append(f"""
-                        <tr style="border-bottom: 1px solid #1e293b;">
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155;">{idx+1}</td>
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155; font-weight: 600;">{row['ID Agent']}</td>
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155;">{row['Nama Pengguna']}</td>
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155; {c_call}">{int(row['Calls']):,}</td>
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155; {c_work}">{row['Work_Time']:.2f}</td>
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155; {c_covcall}">{row['Cov_Call']:.2f}%</td>
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155; {c_covsms}">{row['Cov_SMS']:.2f}%</td>
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155; {c_waba}">{int(row['WABA']):,}</td>
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155;">{format_num(row['Penambahan'], is_currency=True)}</td>
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155;">{format_num(row['Penerimaan'], is_currency=True)}</td>
-                            <td style="padding: 5px 4px; {c_rec}">{row['Rec_Rate']:.2f}%</td>
-                        </tr>
-                        """)
-
-                    tot_pen = group_sorted["Penambahan"].sum()
-                    tot_rec = group_sorted["Penerimaan"].sum()
-                    avg_rate = (tot_rec / tot_pen * 100.0) if tot_pen > 0 else 0.0
-                    avg_calls = group_sorted["Calls"].mean()
-                    avg_work = group_sorted["Work_Time"].mean()
-                    avg_sms = group_sorted["Cov_SMS"].mean()
-                    avg_covcall = group_sorted["Cov_Call"].mean()
-                    tot_waba = group_sorted["WABA"].sum()
-
-                    html_tbl.append(f"""
-                    <tr style="background-color: #064e3b; color: #ecfdf5; font-weight: bold; border-top: 2px solid #059669;">
-                        <td colspan="3" style="padding: 6px 4px; text-align: center; border-right: 1px solid #047857;">TOTAL / RATA-RATA TIM ({len(group_sorted)} AGENT)</td>
-                        <td style="padding: 6px 4px; border-right: 1px solid #047857;">{int(avg_calls):,}</td>
-                        <td style="padding: 6px 4px; border-right: 1px solid #047857;">{avg_work:.2f}</td>
-                        <td style="padding: 6px 4px; border-right: 1px solid #047857;">{avg_covcall:.2f}%</td>
-                        <td style="padding: 6px 4px; border-right: 1px solid #047857;">{avg_sms:.2f}%</td>
-                        <td style="padding: 6px 4px; border-right: 1px solid #047857;">{int(tot_waba):,}</td>
-                        <td style="padding: 6px 4px; border-right: 1px solid #047857;">{format_num(tot_pen, is_currency=True)}</td>
-                        <td style="padding: 6px 4px; border-right: 1px solid #047857;">{format_num(tot_rec, is_currency=True)}</td>
-                        <td style="padding: 6px 4px;">{avg_rate:.2f}%</td>
-                    </tr>
-                    """)
-
-                    html_tbl.append("</tbody></table></div>")
-                    st.markdown("".join(html_tbl), unsafe_allow_html=True)
-
-# =========================================================
-# TAB 8: WARNING LETTER (AGENT MINGGUAN & TL 2 MINGGUAN)
+# TAB 6: WARNING LETTER (AGENT MINGGUAN & TL 2 MINGGUAN)
 # =========================================================
 with tab_wl:
-    st.caption("Daftar Warning Letter untuk Agen dan Team Leader (警告信名单)")
+    st.caption("Daftar Warning Letter untuk Agen dan Team Leader")
 
     if not wl_dict:
-        st.info("Belum ada file mingguan Warning Letter di folder `rawdata` (contoh: `1-7-SK.xlsx`, `8-14-LD.xlsx`).")
+        st.info("Belum ada file mingguan Warning Letter di folder `rawdata` (contoh penamaan file: `1-7-SK.xlsx`, `8-14-LD.xlsx`, `1-12-SK.xlsx`, dst).")
     else:
+        # Urutkan periode WL
         wl_period_keys = sorted(wl_dict.keys(), key=lambda x: [int(n) for n in re.findall(r"\d+", x)] or [0])
         
         col_w1, col_w2 = st.columns([2, 2])
         with col_w1:
-            selected_wl_period = st.selectbox("Pilih Periode Mingguan (Agent WL):", wl_period_keys, key="sel_wl_period")
+            selected_wl_period = st.selectbox("Pilih Periode Mingguan (Agent WL):", wl_period_keys)
         
+        # 1. Hitung WL Agent untuk periode terpilih
         files_for_period = wl_dict.get(selected_wl_period, [])
         df_wl_raw = process_performance_data(files_for_period, [])
         df_wl_ag, _ = calculate_warning_letter_data(df_wl_raw, f"Periode {selected_wl_period}")
 
+        # 2. Hitung WL TL (Gabungan 2 File Mingguan berturut-turut jika tersedia minimal 2 periode)
         df_wl_tl = pd.DataFrame()
         if len(wl_period_keys) >= 2:
+            # Ambil 2 file terakhir atau pasangannya
             p_idx = wl_period_keys.index(selected_wl_period)
+            # Jika periode ganjil (0, 1), pasangkan (0, 1). Jika (2, 3), pasangkan (2, 3).
             pair_start = (p_idx // 2) * 2
             pair_keys = wl_period_keys[pair_start : pair_start + 2]
             
             combined_tl_files = []
             for pk in pair_keys:
-                combined_tl_files.extend(wl_dict.get(pk, []))
+                combined_tl_files.extend(wl_dict[pk])
             
             label_tl_period = " & ".join(pair_keys)
             with col_w2:
@@ -1396,8 +1122,9 @@ with tab_wl:
             _, df_wl_tl = calculate_warning_letter_data(df_wl_tl_raw, f"2-Minggu ({label_tl_period})")
         else:
             with col_w2:
-                st.caption("ℹ️ Warning Letter TL dievaluasi setiap 2 minggu")
+                st.caption("ℹ️ Warning Letter TL di evaluasi setiap 2 minggu")
 
+        # Sub-tab bucket untuk Warning Letter
         wl_sub_tabs = st.tabs([label for label, _, _ in TARGET_BUCKETS])
 
         def render_wl_tables(df_target_ag, df_target_tl, title_text=None):
@@ -1407,49 +1134,42 @@ with tab_wl:
             col_l, col_r = st.columns([1, 1], gap="small")
             with col_l:
                 st.markdown('<div class="sub-table-header header-wl">⚠️ Warning Letter Agent MPT05 (Bottom 30%)</div>', unsafe_allow_html=True)
-                if df_target_ag is None or df_target_ag.empty:
+                if df_target_ag.empty:
                     st.success("🎉 Tidak ada agen MPT05 yang terkena Warning Letter di bucket ini!")
                 else:
                     cols_ag = ["Rank", "ID Agent", "Nama Pengguna", "Nama TL", "Peringkat di Bucket", "Total Penambahan (Periode)", "Total Penerimaan (Periode)", "Recovery Rate (%)", "Status WL"]
-                    cols_exist = [c for c in cols_ag if c in df_target_ag.columns]
-                    ag_view = df_target_ag[cols_exist]
+                    ag_view = df_target_ag[cols_ag]
                     display_full_table(translate_columns(ag_view))
 
             with col_r:
                 st.markdown('<div class="sub-table-header header-wl">🚨 Warning Letter TL MPT05 (Evaluasi 2 Minggu)</div>', unsafe_allow_html=True)
-                if df_target_tl is None or df_target_tl.empty:
+                if df_target_tl.empty:
                     st.success("🎉 Tidak ada Team Leader MPT05 yang terkena Warning Letter di bucket ini!")
                 else:
                     cols_tl = ["Rank", "Nama TL", "Perusahaan", "Peringkat di Bucket", "Total Agent", "Total Penambahan (Periode)", "Total Penerimaan (Periode)", "Recovery Rate (%)", "Status WL"]
-                    cols_exist_tl = [c for c in cols_tl if c in df_target_tl.columns]
-                    tl_view = df_target_tl[cols_exist_tl]
+                    tl_view = df_target_tl[cols_tl]
                     display_full_table(translate_columns(tl_view))
 
         for tab_w, (w_label, b_filt, p_filt) in zip(wl_sub_tabs, TARGET_BUCKETS):
             with tab_w:
                 if b_filt and p_filt:
-                    ag_b = df_wl_ag[(df_wl_ag["Bucket"] == b_filt) & (df_wl_ag["Project"] == p_filt)] if (df_wl_ag is not None and not df_wl_ag.empty) else pd.DataFrame()
-                    tl_b = df_wl_tl[(df_wl_tl["Bucket"] == b_filt) & (df_wl_tl["Project"] == p_filt)] if (df_wl_tl is not None and not df_wl_tl.empty) else pd.DataFrame()
+                    ag_b = df_wl_ag[(df_wl_ag["Bucket"] == b_filt) & (df_wl_ag["Project"] == p_filt)] if not df_wl_ag.empty else pd.DataFrame()
+                    tl_b = df_wl_tl[(df_wl_tl["Bucket"] == b_filt) & (df_wl_tl["Project"] == p_filt)] if not df_wl_tl.empty else pd.DataFrame()
                     render_wl_tables(ag_b, tl_b)
                 else:
-                    projects_ag = df_wl_ag["Project"].tolist() if (df_wl_ag is not None and not df_wl_ag.empty) else []
-                    projects_tl = df_wl_tl["Project"].tolist() if (df_wl_tl is not None and not df_wl_tl.empty) else []
-                    all_p = sorted(list(set(projects_ag + projects_tl)))
-                    
+                    # Semua Bucket
+                    all_p = sorted(list(set(df_wl_ag["Project"].tolist() if not df_wl_ag.empty else [] + (df_wl_tl["Project"].tolist() if not df_wl_tl.empty else []))))
                     if not all_p:
                         st.info("Belum ada data Warning Letter.")
                     for p_item in all_p:
-                        ag_p = df_wl_ag[df_wl_ag["Project"] == p_item] if (df_wl_ag is not None and not df_wl_ag.empty) else pd.DataFrame()
-                        tl_p = df_wl_tl[df_wl_tl["Project"] == p_item] if (df_wl_tl is not None and not df_wl_tl.empty) else pd.DataFrame()
-                        
-                        buckets_ag = ag_p["Bucket"].tolist() if not ag_p.empty else []
-                        buckets_tl = tl_p["Bucket"].tolist() if not tl_p.empty else []
-                        b_list = sorted(list(set(buckets_ag + buckets_tl)))
-                        
+                        ag_p = df_wl_ag[df_wl_ag["Project"] == p_item] if not df_wl_ag.empty else pd.DataFrame()
+                        tl_p = df_wl_tl[df_wl_tl["Project"] == p_item] if not df_wl_tl.empty else pd.DataFrame()
+                        b_list = sorted(list(set(ag_p["Bucket"].tolist() if not ag_p.empty else [] + (tl_p["Bucket"].tolist() if not tl_p.empty else []))))
                         for b_item in b_list:
                             ag_pb = ag_p[ag_p["Bucket"] == b_item] if not ag_p.empty else pd.DataFrame()
                             tl_pb = tl_p[tl_p["Bucket"] == b_item] if not tl_p.empty else pd.DataFrame()
                             render_wl_tables(ag_pb, tl_pb, f"Project: {p_item} &nbsp;|&nbsp; Bucket: {b_item}")
+
 
 # =========================================================
 # HELPER DATA HISTORIS (UNTUK AGENT & TL)
@@ -1474,8 +1194,9 @@ RANK_ORDER = {
     "Data Baru 🆕": 6,
 }
 
+
 # =========================================================
-# TAB 9: REKAM JEJAK HISTORIS AGEN MPT05
+# TAB 7: REKAM JEJAK HISTORIS AGEN MPT05 (STRICT TOP 30% RULE)
 # =========================================================
 with tab_mpt_history:
     st.caption("Memantau kinerja agen MPT05. Konsisten TOP HANYA jika di SEMUA bulan masuk dalam Top 30% bucket masing-masing.")
@@ -1580,8 +1301,9 @@ with tab_mpt_history:
             df_hist_ag_trans = translate_columns(df_hist_ag)
             display_full_table(df_hist_ag_trans, len(df_hist_ag_trans))
 
+
 # =========================================================
-# TAB 10: REKAM JEJAK HISTORIS TEAM LEADER (TL) MPT05
+# TAB 8: REKAM JEJAK HISTORIS TEAM LEADER (TL) MPT05
 # =========================================================
 with tab_tl_history:
     st.caption("Memantau kinerja seluruh Team Leader MPT05 & W-MPT05 lintas bulan (组长月度绩效跟踪).")
@@ -1686,3 +1408,5 @@ with tab_tl_history:
 
             df_hist_tl_trans = translate_columns(df_hist_tl)
             display_full_table(df_hist_tl_trans, len(df_hist_tl_trans))
+
+            
