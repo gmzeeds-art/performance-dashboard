@@ -803,8 +803,8 @@ tab_karyawan, tab_perf_team, tab_perf_comp, tab_perf_agent, tab_final, tab_chart
     "Performance Perusahaan",
     "Agent Performance",
     "Data Bulanan Final",
-    "📈 Grafik Performa Perusahaan",
-    "🎯 Produktivitas Harian Agen",
+    "Grafik Performa Perusahaan",
+    "Produktivitas Harian Agen",
     "Warning Letter",
     "Rekam Jejak Agen MPT05",
     "Rekam Jejak TL MPT05",
@@ -1163,7 +1163,7 @@ with tab_chart_final:
 # TAB 7: PRODUKTIVITAS HARIAN AGEN (MPT05 DAILY PRODUCTIVITY)
 # =========================================================
 with tab_productivity:
-    st.markdown("### 🎯 **Produktivitas Harian Agen MPT05 (Agent Daily Productivity)**")
+    st.markdown("### **Produktivitas Harian Agen MPT05 (Agent Daily Productivity)**")
     st.caption("Monitoring performa operasional dan pencapaian target harian agen MPT05 dari data daily terbaru.")
 
     # Daftar seluruh divisi termasuk LD-C
@@ -1177,7 +1177,7 @@ with tab_productivity:
     if "target_unlocked" not in st.session_state:
         st.session_state["target_unlocked"] = False
 
-    with st.expander("🔒 **Pengaturan Target per Divisi / Bucket (Perlu Password untuk Mengubah)**", expanded=False):
+    with st.expander("🔒 **Pengaturan Target per Divisi / Bucket**", expanded=False):
         col_pwd, col_btn_lock, _ = st.columns([2, 1.2, 3])
         
         with col_pwd:
