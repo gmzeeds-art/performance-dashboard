@@ -438,19 +438,32 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
     daily_dfs = [read_excel_standard(f) for f in daily_file_list]
     df_daily_all = pd.concat([d for d in daily_dfs if not d.empty], ignore_index=True) if daily_dfs else pd.DataFrame()
 
+    # 1. BACA DATA DAILY (HANYA GUNAKAN 1 KEY UNIK PER AGEN AGAR TIDAK DOUBLE)
     daily_map = {}
     if not df_daily_all.empty:
         for _, r in df_daily_all.iterrows():
             id_d = normalize_clean(r.get("Nama Pengguna", ""))
             nm_d = normalize_clean(r.get("Nama", ""))
             p_src = normalize_clean(r.get("_source_project", ""))
+            
+            # Gunakan ID Akun utama; jika kosong baru gunakan Nama
+            acc_key = id_d if id_d else nm_d
+            if not acc_key:
+                continue
+
             vals = {m: clean_numeric(r.get(m, 0)) for m in ALL_METRICS}
             vals["_raw_id"] = str(r.get("Nama Pengguna", "")).strip()
             vals["_raw_nama"] = str(r.get("Nama", "")).strip()
             vals["_proj"] = p_src
-            if id_d: daily_map[(id_d, p_src)] = vals
-            if nm_d: daily_map[(nm_d, p_src)] = vals
+            
+            k_tuple = (acc_key, p_src)
+            if k_tuple not in daily_map:
+                daily_map[k_tuple] = vals
+            else:
+                daily_map[k_tuple]["Total Penambahan Hari Ini"] += vals["Total Penambahan Hari Ini"]
+                daily_map[k_tuple]["Total Penerimaan Hari Ini"] += vals["Total Penerimaan Hari Ini"]
 
+    # 2. BACA DATA MTD (HANYA GUNAKAN 1 KEY UNIK PER AGEN)
     mtd_map = {}
     if not df_mtd_all.empty:
         for _, r in df_mtd_all.iterrows():
@@ -458,14 +471,14 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
             nm_m = normalize_clean(r.get("Nama", ""))
             p_src = normalize_clean(r.get("_source_project", ""))
             
+            acc_key = id_m if id_m else nm_m
+            if not acc_key:
+                continue
+
             pen_val = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
             rec_val = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
 
-            acc_id = id_m if id_m else nm_m
-            if not acc_id:
-                continue
-
-            k_tuple = (acc_id, p_src)
+            k_tuple = (acc_key, p_src)
             if k_tuple not in mtd_map:
                 mtd_map[k_tuple] = {
                     "Total Penambahan Hari Ini": pen_val,
@@ -490,17 +503,16 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
                 for m in METRIC_AVG_COLS:
                     mtd_map[k_tuple][m] /= cnt
 
-    all_keys = set()
-    for (k_id, p_src) in mtd_map.keys():
-        all_keys.add((k_id, p_src))
-    for (k_id, p_src) in daily_map.keys():
-        all_keys.add((k_id, p_src))
+    # 3. KUMPULKAN KEY UNIK
+    all_keys = set(mtd_map.keys()).union(set(daily_map.keys()))
 
+    # 4. PEMBENTUKAN RECORD DATA AKHIR (PASTI TEPAT 1 BARIS PER AGEN)
     records = []
     for (acc_key, proj_key) in all_keys:
         m_vals = mtd_map.get((acc_key, proj_key), {})
         d_vals = daily_map.get((acc_key, proj_key), {})
 
+        # Cocokkan ke database karyawan
         k_info = karyawan_dict.get((acc_key, proj_key)) or {}
         if not k_info:
             alt_id = normalize_clean(d_vals.get("_raw_nama", "") or m_vals.get("_raw_nama", ""))
