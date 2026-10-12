@@ -639,7 +639,6 @@ TARGET_BUCKETS = [
     ("S1 - LD", "S1", "LD"),
     ("S1 - LD-BA", "S1", "LD-BA"),
     ("S0 - LD", "S0", "LD"),
-    ("C - LD-C", "C", "LD-C"),
     ("Semua Bucket", None, None),
 ]
 
@@ -803,8 +802,8 @@ tab_karyawan, tab_perf_team, tab_perf_comp, tab_perf_agent, tab_final, tab_chart
     "Performance Perusahaan",
     "Agent Performance",
     "Data Bulanan Final",
-    "Grafik Performa Perusahaan",
-    "Produktivitas Harian Agen",
+    "📈 Grafik Performa Perusahaan",
+    "🎯 Produktivitas Harian Agen",
     "Warning Letter",
     "Rekam Jejak Agen MPT05",
     "Rekam Jejak TL MPT05",
@@ -1015,7 +1014,7 @@ with tab_final:
             df_res["Ranking"] = [f"#{i+1}" for i in range(len(df_res))]
             return df_res[["Project", "Bucket", "Perusahaan", "Recovery Rate", "Ranking"]]
 
-        target_groups = [("SK", "D0"), ("SK", "S1"), ("LD", "S0"), ("LD", "S1"), ("LD-BA", "S1"), ("LD-C", "C")]
+        target_groups = [("SK", "D0"), ("SK", "S1"), ("LD", "S0"), ("LD", "S1"), ("LD-BA", "S1")]
         period_keys = list(periods_data.keys())
 
         for proj, buck in target_groups:
@@ -1163,64 +1162,30 @@ with tab_chart_final:
 # TAB 7: PRODUKTIVITAS HARIAN AGEN (MPT05 DAILY PRODUCTIVITY)
 # =========================================================
 with tab_productivity:
-    st.markdown("### **Produktivitas Harian Agen MPT05 (Agent Daily Productivity)**")
+    st.markdown("### 🎯 **Produktivitas Harian Agen MPT05 (Agent Daily Productivity)**")
     st.caption("Monitoring performa operasional dan pencapaian target harian agen MPT05 dari data daily terbaru.")
 
-    # Daftar seluruh divisi termasuk LD-C
-    TARGET_KEYS = ["D0 - SK", "S1 - SK", "S1 - LD", "S1 - LD-BA", "S0 - LD", "C - LD-C"]
+    TARGET_KEYS = ["D0 - SK", "S1 - SK", "S1 - LD", "S1 - LD-BA", "S0 - LD"]
     
-    # ---------------------------------------------------------
-    # 1. PENGATURAN TARGET DENGAN PROTEKSI PASSWORD
-    # ---------------------------------------------------------
-    ADMIN_TARGET_PASSWORD = "mpt05admin"  # Ganti dengan password yang Anda inginkan
-    
-    if "target_unlocked" not in st.session_state:
-        st.session_state["target_unlocked"] = False
-
-    with st.expander("🔒 **Pengaturan Target per Divisi / Bucket**", expanded=False):
-        col_pwd, col_btn_lock, _ = st.columns([2, 1.2, 3])
+    with st.expander("⚙️ **Atur Target Manual per Divisi / Bucket (Klik untuk Buka/Tutup)**", expanded=False):
+        st.info("💡 Masukkan target minimum untuk masing-masing metrik. Jika hasil harian agen berada di bawah target, sel angka akan berwarna merah.")
         
-        with col_pwd:
-            input_pwd = st.text_input("Masukkan Password Admin:", type="password", key="input_target_pwd")
-            
-        with col_btn_lock:
-            st.write("") # Spasi vertikal agar tombol sejajar input
-            if not st.session_state["target_unlocked"]:
-                if st.button("🔓 Buka Kunci Edit", use_container_width=True):
-                    if input_pwd == ADMIN_TARGET_PASSWORD:
-                        st.session_state["target_unlocked"] = True
-                        st.success("Akses edit terbuka!")
-                        st.rerun()
-                    else:
-                        st.error("Password salah!")
-            else:
-                if st.button("🔒 Kunci Kembali", use_container_width=True):
-                    st.session_state["target_unlocked"] = False
-                    st.info("Pengaturan dikunci kembali.")
-                    st.rerun()
-
-        is_editable = st.session_state["target_unlocked"]
-        if not is_editable:
-            st.warning("⚠️ Form target terkunci (Read-Only). Masukkan password di atas untuk mengubah nilai target.")
-        else:
-            st.success("✅ Mode Edit Aktif. Anda dapat mengubah nilai target di bawah ini.")
-
         target_configs = {}
         for b_name in TARGET_KEYS:
             st.markdown(f"**Divisi: `{b_name}`**")
             c1, c2, c3, c4, c5, c6 = st.columns(6)
             with c1:
-                t_call = st.number_input("Target Call", min_value=0, value=300, step=10, key=f"t_call_{b_name}", disabled=not is_editable)
+                t_call = st.number_input("Target Call", min_value=0, value=300, step=10, key=f"t_call_{b_name}")
             with c2:
-                t_work = st.number_input("Waktu Kerja (Jam)", min_value=0.0, value=8.0, step=0.5, key=f"t_work_{b_name}", disabled=not is_editable)
+                t_work = st.number_input("Waktu Kerja (Jam)", min_value=0.0, value=8.0, step=0.5, key=f"t_work_{b_name}")
             with c3:
-                t_cov_call = st.number_input("Tutup Call (%)", min_value=0.0, max_value=100.0, value=80.0, step=5.0, key=f"t_covcall_{b_name}", disabled=not is_editable)
+                t_cov_call = st.number_input("Tutup Call (%)", min_value=0.0, max_value=100.0, value=80.0, step=5.0, key=f"t_covcall_{b_name}")
             with c4:
-                t_cov_sms = st.number_input("Tutup SMS (%)", min_value=0.0, max_value=200.0, value=95.0, step=5.0, key=f"t_covsms_{b_name}", disabled=not is_editable)
+                t_cov_sms = st.number_input("Tutup SMS (%)", min_value=0.0, max_value=200.0, value=95.0, step=5.0, key=f"t_covsms_{b_name}")
             with c5:
-                t_waba = st.number_input("Target WABA", min_value=0, value=0, step=5, key=f"t_waba_{b_name}", disabled=not is_editable)
+                t_waba = st.number_input("Target WABA", min_value=0, value=0, step=5, key=f"t_waba_{b_name}")
             with c6:
-                t_rec = st.number_input("Target Rec Rate (%)", min_value=0.0, max_value=100.0, value=15.0, step=1.0, key=f"t_rec_{b_name}", disabled=not is_editable)
+                t_rec = st.number_input("Target Rec Rate (%)", min_value=0.0, max_value=100.0, value=15.0, step=1.0, key=f"t_rec_{b_name}")
                 
             target_configs[b_name] = {
                 "call": t_call,
@@ -1232,9 +1197,6 @@ with tab_productivity:
             }
             st.write("")
 
-    # ---------------------------------------------------------
-    # 2. BACA DATA HARIAN TERBARU (DAILY FILES ONLY)
-    # ---------------------------------------------------------
     if not daily_files:
         st.warning("Belum ada file data harian (daily) di folder rawdata.")
     else:
