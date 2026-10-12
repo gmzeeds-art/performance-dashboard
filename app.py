@@ -1409,7 +1409,7 @@ with tab_productivity:
                     st.markdown("".join(html_tbl), unsafe_allow_html=True)
 
 # =========================================================
-# TAB 8: WARNING LETTER (AGENT MINGGUAN & TL 2 MINGGUAN)
+# TAB 8: WARNING LETTER (DENGAN BUTTON DOWNLOAD EXCEL)
 # =========================================================
 with tab_wl:
     st.caption("Daftar Warning Letter untuk Agen dan Team Leader (警告信名单)")
@@ -1417,9 +1417,12 @@ with tab_wl:
     if not wl_dict:
         st.info("Belum ada file mingguan Warning Letter di folder `rawdata` (contoh: `1-7-SK.xlsx`, `8-14-LD.xlsx`).")
     else:
+        import io
+
         wl_period_keys = sorted(wl_dict.keys(), key=lambda x: [int(n) for n in re.findall(r"\d+", x)] or [0])
         
-        col_w1, col_w2 = st.columns([2, 2])
+        # 1. Pilihan Periode Evaluasi & Tombol Download
+        col_w1, col_w2, col_w3 = st.columns([2, 2.5, 1.5])
         with col_w1:
             selected_wl_period = st.selectbox("Pilih Periode Mingguan (Agent WL):", wl_period_keys, key="sel_wl_period")
         
@@ -1428,6 +1431,7 @@ with tab_wl:
         df_wl_ag, _ = calculate_warning_letter_data(df_wl_raw, f"Periode {selected_wl_period}")
 
         df_wl_tl = pd.DataFrame()
+        label_tl_period = selected_wl_period
         if len(wl_period_keys) >= 2:
             p_idx = wl_period_keys.index(selected_wl_period)
             pair_start = (p_idx // 2) * 2
@@ -1447,6 +1451,58 @@ with tab_wl:
             with col_w2:
                 st.caption("ℹ️ Warning Letter TL dievaluasi setiap 2 minggu")
 
+        # ---------------------------------------------------------
+        # 2. FILTER HANYA KOLOM YANG TERTAMPIL DI TABEL LAYAR
+        # ---------------------------------------------------------
+        cols_display_ag = [
+            "Project", "Bucket", "Rank", "ID Agent", "Nama Pengguna", 
+            "Nama TL", "Peringkat di Bucket", "Total Penambahan (Periode)", 
+            "Total Penerimaan (Periode)", "Recovery Rate (%)", "Status WL"
+        ]
+        cols_display_tl = [
+            "Project", "Bucket", "Rank", "Nama TL", "Perusahaan", 
+            "Peringkat di Bucket", "Total Agent", "Total Penambahan (Periode)", 
+            "Total Penerimaan (Periode)", "Recovery Rate (%)", "Status WL"
+        ]
+
+        # Ambil hanya kolom yang tertampil
+        df_export_ag = pd.DataFrame()
+        if df_wl_ag is not None and not df_wl_ag.empty:
+            exist_ag = [c for c in cols_display_ag if c in df_wl_ag.columns]
+            df_export_ag = df_wl_ag[exist_ag].rename(columns={"Peringkat di Bucket": "Rank / Total"})
+
+        df_export_tl = pd.DataFrame()
+        if df_wl_tl is not None and not df_wl_tl.empty:
+            exist_tl = [c for c in cols_display_tl if c in df_wl_tl.columns]
+            df_export_tl = df_wl_tl[exist_tl].rename(columns={"Peringkat di Bucket": "Rank / Total"})
+
+        # Buat file Excel (.xlsx) di memory buffer
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+            if not df_export_ag.empty:
+                df_export_ag.to_excel(writer, sheet_name="WL_Agent_MPT05", index=False)
+            else:
+                pd.DataFrame({"Keterangan": ["Tidak ada agen MPT05 yang terkena WL"]}).to_excel(writer, sheet_name="WL_Agent_MPT05", index=False)
+
+            if not df_export_tl.empty:
+                df_export_tl.to_excel(writer, sheet_name="WL_TL_MPT05", index=False)
+            else:
+                pd.DataFrame({"Keterangan": ["Tidak ada TL MPT05 yang terkena WL"]}).to_excel(writer, sheet_name="WL_TL_MPT05", index=False)
+
+        # Tombol Download Excel
+        with col_w3:
+            st.write("")  # Penyeimbang margin vertikal agar sejajar
+            st.download_button(
+                label="📥 Unduh Data WL (.xlsx)",
+                data=excel_buffer.getvalue(),
+                file_name=f"Warning_Letter_MPT05_Periode_{selected_wl_period}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+
+        # ---------------------------------------------------------
+        # 3. TAMPILAN TABEL SUB-TAB SESUAI DIVISI / BUCKET
+        # ---------------------------------------------------------
         wl_sub_tabs = st.tabs([label for label, _, _ in TARGET_BUCKETS])
 
         def render_wl_tables(df_target_ag, df_target_tl, title_text=None):
