@@ -328,7 +328,7 @@ def scan_rawdata_files(folder_path):
         else:
             raw_daily_files.append(f)
 
-    # Ambil file MTD paling akhir untuk SK dan LD
+    # Ambil berkas MTD terbaru untuk masing-masing SK dan LD
     mtd_files = []
     sk_mtd = sorted([f for f in raw_mtd_files if "SK" in os.path.basename(f).upper()], key=lambda x: os.path.basename(x).upper())
     ld_mtd = sorted([f for f in raw_mtd_files if "LD" in os.path.basename(f).upper()], key=lambda x: os.path.basename(x).upper())
@@ -337,7 +337,7 @@ def scan_rawdata_files(folder_path):
     if ld_mtd:
         mtd_files.append(ld_mtd[-1])
 
-    # Ambil file harian paling akhir untuk SK dan LD
+    # Ambil berkas harian terbaru untuk masing-masing SK dan LD
     daily_files = []
     sk_dailies = sorted([f for f in raw_daily_files if "SK" in os.path.basename(f).upper()], key=lambda x: os.path.basename(x).upper())
     ld_dailies = sorted([f for f in raw_daily_files if "LD" in os.path.basename(f).upper()], key=lambda x: os.path.basename(x).upper())
@@ -438,15 +438,14 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
     daily_dfs = [read_excel_standard(f) for f in daily_file_list]
     df_daily_all = pd.concat([d for d in daily_dfs if not d.empty], ignore_index=True) if daily_dfs else pd.DataFrame()
 
-    # 1. BACA DATA DAILY (HANYA GUNAKAN 1 KEY UNIK PER AGEN AGAR TIDAK DOUBLE)
+    # 1. BACA DATA HARIAN (KUNCI HANYA 1 ENTRI UNIK AGAR TIDAK TERDUPLIKASI)
     daily_map = {}
     if not df_daily_all.empty:
         for _, r in df_daily_all.iterrows():
             id_d = normalize_clean(r.get("Nama Pengguna", ""))
             nm_d = normalize_clean(r.get("Nama", ""))
             p_src = normalize_clean(r.get("_source_project", ""))
-            
-            # Gunakan ID Akun utama; jika kosong baru gunakan Nama
+
             acc_key = id_d if id_d else nm_d
             if not acc_key:
                 continue
@@ -455,7 +454,7 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
             vals["_raw_id"] = str(r.get("Nama Pengguna", "")).strip()
             vals["_raw_nama"] = str(r.get("Nama", "")).strip()
             vals["_proj"] = p_src
-            
+
             k_tuple = (acc_key, p_src)
             if k_tuple not in daily_map:
                 daily_map[k_tuple] = vals
@@ -463,14 +462,14 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
                 daily_map[k_tuple]["Total Penambahan Hari Ini"] += vals["Total Penambahan Hari Ini"]
                 daily_map[k_tuple]["Total Penerimaan Hari Ini"] += vals["Total Penerimaan Hari Ini"]
 
-    # 2. BACA DATA MTD (HANYA GUNAKAN 1 KEY UNIK PER AGEN)
+    # 2. BACA DATA MTD (KUNCI HANYA 1 ENTRI UNIK PER AGEN)
     mtd_map = {}
     if not df_mtd_all.empty:
         for _, r in df_mtd_all.iterrows():
             id_m = normalize_clean(r.get("Nama Pengguna", ""))
             nm_m = normalize_clean(r.get("Nama", ""))
             p_src = normalize_clean(r.get("_source_project", ""))
-            
+
             acc_key = id_m if id_m else nm_m
             if not acc_key:
                 continue
@@ -503,16 +502,14 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
                 for m in METRIC_AVG_COLS:
                     mtd_map[k_tuple][m] /= cnt
 
-    # 3. KUMPULKAN KEY UNIK
+    # 3. GABUNGKAN KUNCI UNIK AGEN
     all_keys = set(mtd_map.keys()).union(set(daily_map.keys()))
 
-    # 4. PEMBENTUKAN RECORD DATA AKHIR (PASTI TEPAT 1 BARIS PER AGEN)
     records = []
     for (acc_key, proj_key) in all_keys:
         m_vals = mtd_map.get((acc_key, proj_key), {})
         d_vals = daily_map.get((acc_key, proj_key), {})
 
-        # Cocokkan ke database karyawan
         k_info = karyawan_dict.get((acc_key, proj_key)) or {}
         if not k_info:
             alt_id = normalize_clean(d_vals.get("_raw_nama", "") or m_vals.get("_raw_nama", ""))
