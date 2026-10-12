@@ -246,7 +246,7 @@ def get_ranking_interval(rank, total):
         return "BOTTOM20%"
 
 # ---------------------------------------------------------
-# 1. LOAD DATABASE KARYAWAN & TAB MASTER (DENGAN CACHE)
+# 1. LOAD DATABASE KARYAWAN & TAB MASTER
 # ---------------------------------------------------------
 @st.cache_data(ttl=300, show_spinner=False)
 def load_database_and_master(file_path):
@@ -269,7 +269,7 @@ def load_database_and_master(file_path):
         return None, None
 
 # ---------------------------------------------------------
-# 2. SCAN & BACA FILE RAWDATA (DENGAN CACHE)
+# 2. SCAN & BACA FILE RAWDATA (AKURAT MTD VS BULAN FINAL)
 # ---------------------------------------------------------
 METRIC_SUM_COLS = ["Total Penambahan Hari Ini", "Total Penerimaan Hari Ini"]
 METRIC_AVG_COLS = ["Jumlah Panggilan", "Waktu Kerja Rata-rata", "Jumlah SMS", "Jumlah Pengiriman Template WABA"]
@@ -285,6 +285,10 @@ def read_excel_standard(file_path):
         detected_proj = ""
         if "_SK" in fname or "-SK" in fname or " SK" in fname:
             detected_proj = "SK"
+        elif "LD-BA" in fname or "-BA" in fname:
+            detected_proj = "LD-BA"
+        elif "LD-C" in fname or "-C" in fname:
+            detected_proj = "LD-C"
         elif "_LD" in fname or "-LD" in fname or " LD" in fname:
             detected_proj = "LD"
         df["_source_project"] = detected_proj
@@ -305,19 +309,28 @@ def scan_rawdata_files(folder_path):
     raw_daily_files = []
     wl_files = {}
 
+    cur_period_str = datetime.now().strftime("%m%Y")  # Contoh: "102026"
+
     for f in all_files:
         clean_name = os.path.basename(f).upper()
-        m_periode = re.search(r"(\d{6})", clean_name)
         m_wl = re.match(r"^(\d+-\d+)[-_ ]?.*", clean_name)
+        m_start_digits = re.match(r"^(\d{6})[-_].*", clean_name)
 
         if m_wl:
             wl_key = m_wl.group(1)
             wl_files.setdefault(wl_key, []).append(f)
-        elif m_periode:
-            periode = m_periode.group(1)
+        elif m_start_digits:
+            # File final lampau berawalan angka (misal: 092026-SK.xlsx)
+            periode = m_start_digits.group(1)
             final_files.setdefault(periode, []).append(f)
         elif "MTD" in clean_name:
-            mtd_files.append(f)
+            m_digits = re.search(r"(\d{6})", clean_name)
+            # Jika memuat label bulan lampau yang bukan bulan ini, masukkan ke final
+            if m_digits and m_digits.group(1) != cur_period_str:
+                final_files.setdefault(m_digits.group(1), []).append(f)
+            else:
+                # File MTD bulan berjalan
+                mtd_files.append(f)
         else:
             raw_daily_files.append(f)
 
@@ -639,6 +652,7 @@ TARGET_BUCKETS = [
     ("S1 - LD", "S1", "LD"),
     ("S1 - LD-BA", "S1", "LD-BA"),
     ("S0 - LD", "S0", "LD"),
+    ("C - LD-C", "C", "LD-C"),
     ("Semua Bucket", None, None),
 ]
 
@@ -1014,7 +1028,7 @@ with tab_final:
             df_res["Ranking"] = [f"#{i+1}" for i in range(len(df_res))]
             return df_res[["Project", "Bucket", "Perusahaan", "Recovery Rate", "Ranking"]]
 
-        target_groups = [("SK", "D0"), ("SK", "S1"), ("LD", "S0"), ("LD", "S1"), ("LD-BA", "S1")]
+        target_groups = [("SK", "D0"), ("SK", "S1"), ("LD", "S0"), ("LD", "S1"), ("LD-BA", "S1"), ("LD-C", "C")]
         period_keys = list(periods_data.keys())
 
         for proj, buck in target_groups:
@@ -1060,7 +1074,7 @@ with tab_chart_final:
     if not periods_data:
         st.info("Belum ada data bulanan final untuk ditampilkan dalam grafik.")
     else:
-        target_groups = [("SK", "D0"), ("SK", "S1"), ("LD", "S0"), ("LD", "S1"), ("LD-BA", "S1")]
+        target_groups = [("SK", "D0"), ("SK", "S1"), ("LD", "S0"), ("LD", "S1"), ("LD-BA", "S1"), ("LD-C", "C")]
         period_keys = list(periods_data.keys())
 
         short_labels = []
@@ -1165,27 +1179,54 @@ with tab_productivity:
     st.markdown("### 🎯 **Produktivitas Harian Agen MPT05 (Agent Daily Productivity)**")
     st.caption("Monitoring performa operasional dan pencapaian target harian agen MPT05 dari data daily terbaru.")
 
-    TARGET_KEYS = ["D0 - SK", "S1 - SK", "S1 - LD", "S1 - LD-BA", "S0 - LD"]
-    
-    with st.expander("⚙️ **Atur Target Manual per Divisi / Bucket (Klik untuk Buka/Tutup)**", expanded=False):
-        st.info("💡 Masukkan target minimum untuk masing-masing metrik. Jika hasil harian agen berada di bawah target, sel angka akan berwarna merah.")
-        
+    TARGET_KEYS = ["D0 - SK", "S1 - SK", "S1 - LD", "S1 - LD-BA", "S0 - LD", "C - LD-C"]
+    ADMIN_TARGET_PASSWORD = "mpt05admin"
+
+    if "target_unlocked" not in st.session_state:
+        st.session_state["target_unlocked"] = False
+
+    with st.expander("🔒 **Pengaturan Target per Divisi / Bucket (Perlu Password untuk Mengubah)**", expanded=False):
+        col_pwd, col_btn_lock, _ = st.columns([2, 1.2, 3])
+        with col_pwd:
+            input_pwd = st.text_input("Masukkan Password Admin:", type="password", key="input_target_pwd")
+        with col_btn_lock:
+            st.write("")
+            if not st.session_state["target_unlocked"]:
+                if st.button("🔓 Buka Kunci Edit", use_container_width=True):
+                    if input_pwd == ADMIN_TARGET_PASSWORD:
+                        st.session_state["target_unlocked"] = True
+                        st.success("Akses edit terbuka!")
+                        st.rerun()
+                    else:
+                        st.error("Password salah!")
+            else:
+                if st.button("🔒 Kunci Kembali", use_container_width=True):
+                    st.session_state["target_unlocked"] = False
+                    st.info("Pengaturan dikunci kembali.")
+                    st.rerun()
+
+        is_editable = st.session_state["target_unlocked"]
+        if not is_editable:
+            st.warning("⚠️ Form target terkunci (Read-Only). Masukkan password di atas untuk mengubah nilai target.")
+        else:
+            st.success("✅ Mode Edit Aktif. Anda dapat mengubah nilai target di bawah ini.")
+
         target_configs = {}
         for b_name in TARGET_KEYS:
             st.markdown(f"**Divisi: `{b_name}`**")
             c1, c2, c3, c4, c5, c6 = st.columns(6)
             with c1:
-                t_call = st.number_input("Target Call", min_value=0, value=300, step=10, key=f"t_call_{b_name}")
+                t_call = st.number_input("Target Call", min_value=0, value=300, step=10, key=f"t_call_{b_name}", disabled=not is_editable)
             with c2:
-                t_work = st.number_input("Waktu Kerja (Jam)", min_value=0.0, value=8.0, step=0.5, key=f"t_work_{b_name}")
+                t_work = st.number_input("Waktu Kerja (Jam)", min_value=0.0, value=8.0, step=0.5, key=f"t_work_{b_name}", disabled=not is_editable)
             with c3:
-                t_cov_call = st.number_input("Tutup Call (%)", min_value=0.0, max_value=100.0, value=80.0, step=5.0, key=f"t_covcall_{b_name}")
+                t_cov_call = st.number_input("Tutup Call (%)", min_value=0.0, max_value=100.0, value=80.0, step=5.0, key=f"t_covcall_{b_name}", disabled=not is_editable)
             with c4:
-                t_cov_sms = st.number_input("Tutup SMS (%)", min_value=0.0, max_value=200.0, value=95.0, step=5.0, key=f"t_covsms_{b_name}")
+                t_cov_sms = st.number_input("Tutup SMS (%)", min_value=0.0, max_value=200.0, value=95.0, step=5.0, key=f"t_covsms_{b_name}", disabled=not is_editable)
             with c5:
-                t_waba = st.number_input("Target WABA", min_value=0, value=0, step=5, key=f"t_waba_{b_name}")
+                t_waba = st.number_input("Target WABA", min_value=0, value=0, step=5, key=f"t_waba_{b_name}", disabled=not is_editable)
             with c6:
-                t_rec = st.number_input("Target Rec Rate (%)", min_value=0.0, max_value=100.0, value=15.0, step=1.0, key=f"t_rec_{b_name}")
+                t_rec = st.number_input("Target Rec Rate (%)", min_value=0.0, max_value=100.0, value=15.0, step=1.0, key=f"t_rec_{b_name}", disabled=not is_editable)
                 
             target_configs[b_name] = {
                 "call": t_call,
@@ -1280,30 +1321,30 @@ with tab_productivity:
 
                     tg = target_configs.get(div_key, {"call": 300, "work": 8.0, "cov_call": 80.0, "cov_sms": 95.0, "waba": 0, "rec_rate": 15.0})
 
-                    st.markdown(
-                        f"""
-                        <div style="background-color: #1e3a1e; color: #86efac; padding: 7px 14px; border-radius: 6px; font-weight: bold; font-size: 1rem; margin-top: 15px; margin-bottom: 8px;">
-                            👥 Team: {tl_team} &nbsp;|&nbsp; Divisi: {div_key} &nbsp;(Target Call: {tg['call']} | Waktu: {tg['work']} Jam | SMS: {tg['cov_sms']}%)
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
+                    team_header = (
+                        f'<div style="background-color: #1e3a1e; color: #86efac; padding: 7px 14px; '
+                        f'border-radius: 6px; font-weight: bold; font-size: 1rem; margin-top: 15px; margin-bottom: 8px;">'
+                        f'👥 Team: {tl_team} &nbsp;|&nbsp; Divisi: {div_key} &nbsp;'
+                        f'(Target Call: {tg["call"]} | Waktu: {tg["work"]} Jam | SMS: {tg["cov_sms"]}%)'
+                        f'</div>'
                     )
+                    st.markdown(team_header, unsafe_allow_html=True)
 
                     html_tbl = [
-                        '<div style="width: 100%; overflow-x: auto; margin-bottom: 1.2rem; border: 1px solid #334155; border-radius: 4px;">',
-                        '<table style="width: 100%; border-collapse: separate; border-spacing: 0; font-family: -apple-system, sans-serif; font-size: 0.82rem; text-align: center;">',
-                        '<thead><tr>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">No</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">ID Agent</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Nama Agent</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Calls (Panggilan)</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Waktu Kerja (Jam)</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Tutup Call (%)</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Tutup SMS (%)</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Template WABA</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Penambahan</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Penerimaan</th>',
-                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px;">Recovery Rate</th>',
+                        '<div style="width: 100%; overflow-x: auto; margin-bottom: 1.2rem; border: 1px solid #334155; border-radius: 4px;">'
+                        '<table style="width: 100%; border-collapse: separate; border-spacing: 0; font-family: -apple-system, sans-serif; font-size: 0.82rem; text-align: center;">'
+                        '<thead><tr>'
+                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">No</th>'
+                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">ID Agent</th>'
+                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Nama Agent</th>'
+                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Calls (Panggilan)</th>'
+                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Waktu Kerja (Jam)</th>'
+                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Tutup Call (%)</th>'
+                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Tutup SMS (%)</th>'
+                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Template WABA</th>'
+                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Penambahan</th>'
+                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">Penerimaan</th>'
+                        '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px;">Recovery Rate</th>'
                         '</tr></thead><tbody>'
                     ]
 
@@ -1317,21 +1358,22 @@ with tab_productivity:
                         c_waba = "color: #ef4444; font-weight: bold;" if row["WABA"] < tg["waba"] else "color: inherit;"
                         c_rec = "color: #ef4444; font-weight: bold;" if row["Rec_Rate"] < tg["rec_rate"] else "color: inherit;"
 
-                        html_tbl.append(f"""
-                        <tr style="border-bottom: 1px solid #1e293b;">
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155;">{idx+1}</td>
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155; font-weight: 600;">{row['ID Agent']}</td>
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155;">{row['Nama Pengguna']}</td>
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155; {c_call}">{int(row['Calls']):,}</td>
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155; {c_work}">{row['Work_Time']:.2f}</td>
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155; {c_covcall}">{row['Cov_Call']:.2f}%</td>
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155; {c_covsms}">{row['Cov_SMS']:.2f}%</td>
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155; {c_waba}">{int(row['WABA']):,}</td>
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155;">{format_num(row['Penambahan'], is_currency=True)}</td>
-                            <td style="padding: 5px 4px; border-right: 1px solid #334155;">{format_num(row['Penerimaan'], is_currency=True)}</td>
-                            <td style="padding: 5px 4px; {c_rec}">{row['Rec_Rate']:.2f}%</td>
-                        </tr>
-                        """)
+                        row_html = (
+                            f'<tr style="border-bottom: 1px solid #1e293b;">'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155;">{idx+1}</td>'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155; font-weight: 600;">{row["ID Agent"]}</td>'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155;">{row["Nama Pengguna"]}</td>'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155; {c_call}">{int(row["Calls"]):,}</td>'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155; {c_work}">{row["Work_Time"]:.2f}</td>'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155; {c_covcall}">{row["Cov_Call"]:.2f}%</td>'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155; {c_covsms}">{row["Cov_SMS"]:.2f}%</td>'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155; {c_waba}">{int(row["WABA"]):,}</td>'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155;">{format_num(row["Penambahan"], is_currency=True)}</td>'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155;">{format_num(row["Penerimaan"], is_currency=True)}</td>'
+                            f'<td style="padding: 5px 4px; {c_rec}">{row["Rec_Rate"]:.2f}%</td>'
+                            f'</tr>'
+                        )
+                        html_tbl.append(row_html)
 
                     tot_pen = group_sorted["Penambahan"].sum()
                     tot_rec = group_sorted["Penerimaan"].sum()
@@ -1342,21 +1384,22 @@ with tab_productivity:
                     avg_covcall = group_sorted["Cov_Call"].mean()
                     tot_waba = group_sorted["WABA"].sum()
 
-                    html_tbl.append(f"""
-                    <tr style="background-color: #064e3b; color: #ecfdf5; font-weight: bold; border-top: 2px solid #059669;">
-                        <td colspan="3" style="padding: 6px 4px; text-align: center; border-right: 1px solid #047857;">TOTAL / RATA-RATA TIM ({len(group_sorted)} AGENT)</td>
-                        <td style="padding: 6px 4px; border-right: 1px solid #047857;">{int(avg_calls):,}</td>
-                        <td style="padding: 6px 4px; border-right: 1px solid #047857;">{avg_work:.2f}</td>
-                        <td style="padding: 6px 4px; border-right: 1px solid #047857;">{avg_covcall:.2f}%</td>
-                        <td style="padding: 6px 4px; border-right: 1px solid #047857;">{avg_sms:.2f}%</td>
-                        <td style="padding: 6px 4px; border-right: 1px solid #047857;">{int(tot_waba):,}</td>
-                        <td style="padding: 6px 4px; border-right: 1px solid #047857;">{format_num(tot_pen, is_currency=True)}</td>
-                        <td style="padding: 6px 4px; border-right: 1px solid #047857;">{format_num(tot_rec, is_currency=True)}</td>
-                        <td style="padding: 6px 4px;">{avg_rate:.2f}%</td>
-                    </tr>
-                    """)
+                    total_html = (
+                        f'<tr style="background-color: #064e3b; color: #ecfdf5; font-weight: bold; border-top: 2px solid #059669;">'
+                        f'<td colspan="3" style="padding: 6px 4px; text-align: center; border-right: 1px solid #047857;">TOTAL / RATA-RATA TIM ({len(group_sorted)} AGENT)</td>'
+                        f'<td style="padding: 6px 4px; border-right: 1px solid #047857;">{int(avg_calls):,}</td>'
+                        f'<td style="padding: 6px 4px; border-right: 1px solid #047857;">{avg_work:.2f}</td>'
+                        f'<td style="padding: 6px 4px; border-right: 1px solid #047857;">{avg_covcall:.2f}%</td>'
+                        f'<td style="padding: 6px 4px; border-right: 1px solid #047857;">{avg_sms:.2f}%</td>'
+                        f'<td style="padding: 6px 4px; border-right: 1px solid #047857;">{int(tot_waba):,}</td>'
+                        f'<td style="padding: 6px 4px; border-right: 1px solid #047857;">{format_num(tot_pen, is_currency=True)}</td>'
+                        f'<td style="padding: 6px 4px; border-right: 1px solid #047857;">{format_num(tot_rec, is_currency=True)}</td>'
+                        f'<td style="padding: 6px 4px;">{avg_rate:.2f}%</td>'
+                        f'</tr>'
+                    )
+                    html_tbl.append(total_html)
+                    html_tbl.append('</tbody></table></div>')
 
-                    html_tbl.append("</tbody></table></div>")
                     st.markdown("".join(html_tbl), unsafe_allow_html=True)
 
 # =========================================================
