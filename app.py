@@ -216,7 +216,9 @@ def format_num(val, is_currency=False):
 def normalize_clean(val):
     if pd.isna(val):
         return ""
-    return " ".join(str(val).strip().upper().split())
+    # Ganti non-breaking space (\xa0) dan spasi ganda
+    cleaned = str(val).replace("\xa0", " ").strip().upper()
+    return " ".join(cleaned.split())
 
 def map_status_kerja(st_raw):
     s = str(st_raw).strip().lower()
@@ -576,8 +578,17 @@ def build_dual_tables(df_subset, group_col_name, label_entity):
         p_val = first_row.get("Project", "")
         b_val = first_row.get("Bucket", "")
 
-        tot_pen = group["Total Penambahan Hari Ini_Total"].sum()
-        tot_rec = group["Total Penerimaan Hari Ini_Total"].sum()
+        # Prioritaskan berkas MTD murni jika ada (agar tidak terakumulasi dobel dengan daily)
+        pen_mtd_sum = group["Total Penambahan Hari Ini_MTD"].sum()
+        rec_mtd_sum = group["Total Penerimaan Hari Ini_MTD"].sum()
+        
+        if pen_mtd_sum > 0:
+            tot_pen = pen_mtd_sum
+            tot_rec = rec_mtd_sum
+        else:
+            tot_pen = group["Total Penambahan Hari Ini_Total"].sum()
+            tot_rec = group["Total Penerimaan Hari Ini_Total"].sum()
+
         rec_rate_monthly = (tot_rec / tot_pen * 100) if tot_pen > 0 else 0.0
 
         rows_monthly.append({
@@ -882,8 +893,15 @@ with tab_perf_agent:
             rows_d = []
             for _, r in target_df.iterrows():
                 st_kerja = r.get("Status Kerja", "Aktif")
-                pen_m = r["Total Penambahan Hari Ini_Total"]
-                rec_m = r["Total Penerimaan Hari Ini_Total"]
+                
+                # Gunakan data MTD murni jika ada
+                if r.get("Total Penambahan Hari Ini_MTD", 0.0) > 0:
+                    pen_m = r["Total Penambahan Hari Ini_MTD"]
+                    rec_m = r["Total Penerimaan Hari Ini_MTD"]
+                else:
+                    pen_m = r["Total Penambahan Hari Ini_Total"]
+                    rec_m = r["Total Penerimaan Hari Ini_Total"]
+                    
                 rate_m = (rec_m / pen_m * 100) if pen_m > 0 else 0.0
 
                 rows_m.append({
