@@ -152,11 +152,11 @@ def translate_columns(df):
 def display_full_table(df_input, row_count=None):
     df = df_input.data if hasattr(df_input, "data") else df_input
 
-    html = ['<div style="width: 100%; overflow-x: auto; margin-bottom: 0.6rem; border: 1px solid #334155; border-radius: 4px;">']
+    html = ['<div style="width: 100%; overflow-x: auto; margin-bottom: 0.6rem; border: 1.5px solid #94a3b8; border-radius: 4px; background-color: #ffffff;">']
     html.append(
         '<table style="width: 100%; border-collapse: separate; border-spacing: 0; '
         'font-family: -apple-system, BlinkMacSystemFont, sans-serif; '
-        'font-size: 0.81rem; text-align: center;">'
+        'font-size: 0.81rem; text-align: center; background-color: #ffffff;">'
     )
     
     html.append('<thead><tr>')
@@ -169,24 +169,27 @@ def display_full_table(df_input, row_count=None):
         )
     html.append('</tr></thead><tbody>')
     
-    for _, row in df.iterrows():
+    for idx, row in df.iterrows():
         row_str = " ".join([str(v) for v in row.values]).upper()
         is_mpt05 = "MPT05" in row_str
         is_resign = "RESIGN" in row_str
         is_wl = "WL" in row_str or "WARNING" in row_str
         
         if is_wl:
-            row_style = "background-color: rgba(239, 68, 68, 0.22); font-weight: bold; color: #fca5a5;"
+            row_style = "background-color: #fee2e2; font-weight: bold; color: #991b1b;"
         elif is_resign:
-            row_style = "background-color: rgba(148, 163, 184, 0.12); color: #94a3b8;"
+            row_style = "background-color: #f1f5f9; color: #94a3b8;"
         elif is_mpt05:
-            row_style = "background-color: rgba(234, 179, 8, 0.35); font-weight: bold; color: inherit;"
+            row_style = "background-color: #fef3c7; font-weight: bold; color: #92400e;"
         else:
-            row_style = "background-color: transparent; color: inherit;"
+            bg_zebra = "#ffffff" if idx % 2 == 0 else "#f8fafc"
+            row_style = f"background-color: {bg_zebra}; color: #0f172a;"
             
         html.append(f'<tr style="{row_style}">')
         for val in row.values:
-            html.append(f'<td style="padding: 5px 4px; border-bottom: 1px solid #334155; border-right: 1px solid #334155; vertical-align: middle; white-space: nowrap;">{val}</td>')
+            val_str = str(val)
+            cell_extra_color = "color: #dc2626; font-weight: 700;" if val_str.startswith("-") and val_str != "-" else ""
+            html.append(f'<td style="padding: 6px 4px; border-bottom: 1px solid #cbd5e1; border-right: 1px solid #cbd5e1; vertical-align: middle; white-space: nowrap; {cell_extra_color}">{val}</td>')
         html.append('</tr>')
         
     html.append('</tbody></table></div>')
@@ -215,7 +218,6 @@ def format_num(val, is_currency=False):
 def normalize_clean(val):
     if pd.isna(val):
         return ""
-    # Menghapus spasi non-breaking space (\xa0) dan merapikan spasi ganda
     cleaned = str(val).replace("\xa0", " ").strip().upper()
     return " ".join(cleaned.split())
 
@@ -247,7 +249,7 @@ def get_ranking_interval(rank, total):
         return "BOTTOM20%"
 
 # ---------------------------------------------------------
-# 1. LOAD DATABASE KARYAWAN & TAB MASTER
+# 1. LOAD DATABASE KARYAWAN (HANYA BACA SHEET 1)
 # ---------------------------------------------------------
 @st.cache_data(ttl=300, show_spinner=False)
 def load_database_and_master(file_path):
@@ -257,6 +259,7 @@ def load_database_and_master(file_path):
         xls = pd.ExcelFile(file_path)
         sheet_names = xls.sheet_names
 
+        # Sesuai instruksi: Membaca murni Sheet 1 saja
         df_karyawan = pd.read_excel(file_path, sheet_name=sheet_names[0])
         df_master = pd.read_excel(file_path, sheet_name=sheet_names[1]) if len(sheet_names) > 1 else pd.DataFrame()
 
@@ -335,7 +338,7 @@ def scan_rawdata_files(folder_path):
     if ld_mtd:
         mtd_files.append(ld_mtd[-1])
 
-    # Ambil berkas harian terbaru untuk masing-masing SK dan LD
+    # Ambil berkas harian terbaru untuk masing-masing SK dan LD (jika ada)
     daily_files = []
     sk_dailies = sorted([f for f in raw_daily_files if "SK" in os.path.basename(f).upper()], key=lambda x: os.path.basename(x).upper())
     ld_dailies = sorted([f for f in raw_daily_files if "LD" in os.path.basename(f).upper()], key=lambda x: os.path.basename(x).upper())
@@ -368,12 +371,15 @@ tl_col = "Nama TL" if "Nama TL" in df_karyawan.columns else "Perusahaan"
 bucket_col = "Bucket" if "Bucket" in df_karyawan.columns else "Bucket"
 project_col = "Project" if "Project" in df_karyawan.columns else "Project"
 
-# Mapping Database Karyawan
+# ---------------------------------------------------------
+# MAPPING DATABASE KARYAWAN DENGAN RESOLUSI ID DUPLIKAT (PROJECT AWARE)
+# ---------------------------------------------------------
 karyawan_dict = {}
 for _, row in df_karyawan.iterrows():
     id_akun = normalize_clean(row.get("ID Pengguna", ""))
     nama_orang = normalize_clean(row.get("Nama Pengguna", ""))
     proj_exact = str(row.get(project_col, "")).strip().upper()
+    proj_cat = "SK" if proj_exact == "SK" else "LD"
     raw_status = row.get("Status Kerja", "")
 
     info = {
@@ -385,21 +391,13 @@ for _, row in df_karyawan.iterrows():
         "Nama_Orang_Resmi": str(row.get("Nama Pengguna", "")).strip(),
     }
 
-    if id_akun and proj_exact:
+    # Kunci pemetaan spesifik per project kategori (mencegah bentrok ID duplikat SK vs LD)
+    if id_akun:
+        karyawan_dict[(id_akun, proj_cat)] = info
         karyawan_dict[(id_akun, proj_exact)] = info
-    if nama_orang and proj_exact:
+    if nama_orang:
+        karyawan_dict[(nama_orang, proj_cat)] = info
         karyawan_dict[(nama_orang, proj_exact)] = info
-
-    if "LD" in proj_exact:
-        if id_akun and (id_akun, "LD") not in karyawan_dict:
-            karyawan_dict[(id_akun, "LD")] = info
-        if nama_orang and (nama_orang, "LD") not in karyawan_dict:
-            karyawan_dict[(nama_orang, "LD")] = info
-
-    if id_akun and id_akun not in karyawan_dict:
-        karyawan_dict[id_akun] = info
-    if nama_orang and nama_orang not in karyawan_dict:
-        karyawan_dict[nama_orang] = info
 
 master_rules = []
 if df_master is not None and not df_master.empty:
@@ -426,6 +424,9 @@ def get_master_status(tl, bucket, project):
 
     return "Tidak", "Non-Kompetisi"
 
+# ---------------------------------------------------------
+# FUNGSI PEMPROSESAN MTD + DAILY GABUNGAN
+# ---------------------------------------------------------
 def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
     if not mtd_file_list and not daily_file_list:
         return pd.DataFrame()
@@ -436,13 +437,14 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
     daily_dfs = [read_excel_standard(f) for f in daily_file_list]
     df_daily_all = pd.concat([d for d in daily_dfs if not d.empty], ignore_index=True) if daily_dfs else pd.DataFrame()
 
-    # 1. BACA DATA HARIAN (KUNCI HANYA 1 ENTRI UNIK AGAR TIDAK TERDUPLIKASI)
+    # 1. BACA DATA HARIAN
     daily_map = {}
     if not df_daily_all.empty:
         for _, r in df_daily_all.iterrows():
             id_d = normalize_clean(r.get("Nama Pengguna", ""))
             nm_d = normalize_clean(r.get("Nama", ""))
             p_src = normalize_clean(r.get("_source_project", ""))
+            p_cat = "SK" if "SK" in p_src else "LD"
 
             acc_key = id_d if id_d else nm_d
             if not acc_key:
@@ -452,21 +454,23 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
             vals["_raw_id"] = str(r.get("Nama Pengguna", "")).strip()
             vals["_raw_nama"] = str(r.get("Nama", "")).strip()
             vals["_proj"] = p_src
+            vals["_proj_cat"] = p_cat
 
-            k_tuple = (acc_key, p_src)
+            k_tuple = (acc_key, p_cat)
             if k_tuple not in daily_map:
                 daily_map[k_tuple] = vals
             else:
                 daily_map[k_tuple]["Total Penambahan Hari Ini"] += vals["Total Penambahan Hari Ini"]
                 daily_map[k_tuple]["Total Penerimaan Hari Ini"] += vals["Total Penerimaan Hari Ini"]
 
-    # 2. BACA DATA MTD (KUNCI HANYA 1 ENTRI UNIK PER AGEN)
+    # 2. BACA DATA MTD
     mtd_map = {}
     if not df_mtd_all.empty:
         for _, r in df_mtd_all.iterrows():
             id_m = normalize_clean(r.get("Nama Pengguna", ""))
             nm_m = normalize_clean(r.get("Nama", ""))
             p_src = normalize_clean(r.get("_source_project", ""))
+            p_cat = "SK" if "SK" in p_src else "LD"
 
             acc_key = id_m if id_m else nm_m
             if not acc_key:
@@ -475,7 +479,7 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
             pen_val = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
             rec_val = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
 
-            k_tuple = (acc_key, p_src)
+            k_tuple = (acc_key, p_cat)
             if k_tuple not in mtd_map:
                 mtd_map[k_tuple] = {
                     "Total Penambahan Hari Ini": pen_val,
@@ -483,6 +487,7 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
                     "_raw_id": str(r.get("Nama Pengguna", "")).strip(),
                     "_raw_nama": str(r.get("Nama", "")).strip(),
                     "_proj": p_src,
+                    "_proj_cat": p_cat,
                     "_count": 1
                 }
                 for m in METRIC_AVG_COLS:
@@ -500,37 +505,40 @@ def process_performance_data(mtd_file_list, daily_file_list, periode_label=""):
                 for m in METRIC_AVG_COLS:
                     mtd_map[k_tuple][m] /= cnt
 
-    # 3. GABUNGKAN KUNCI UNIK AGEN
+    # 3. GABUNGKAN KUNCI UNIK AGEN DENGAN RESOLUSI PROJECT KATEGORI
     all_keys = set(mtd_map.keys()).union(set(daily_map.keys()))
 
     records = []
-    for (acc_key, proj_key) in all_keys:
-        m_vals = mtd_map.get((acc_key, proj_key), {})
-        d_vals = daily_map.get((acc_key, proj_key), {})
+    for (acc_key, proj_cat) in all_keys:
+        m_vals = mtd_map.get((acc_key, proj_cat), {})
+        d_vals = daily_map.get((acc_key, proj_cat), {})
 
-        k_info = karyawan_dict.get((acc_key, proj_key)) or {}
+        raw_id_str = d_vals.get("_raw_id", "") or m_vals.get("_raw_id", "") or acc_key
+        raw_nm_str = d_vals.get("_raw_nama", "") or m_vals.get("_raw_nama", "") or acc_key
+        p_src = d_vals.get("_proj", "") or m_vals.get("_proj", "") or proj_cat
+
+        # Lookup dengan menyertakan Project Kategori (SK atau LD)
+        k_info = karyawan_dict.get((acc_key, proj_cat)) or {}
         if not k_info:
-            alt_id = normalize_clean(d_vals.get("_raw_nama", "") or m_vals.get("_raw_nama", ""))
-            k_info = karyawan_dict.get((alt_id, proj_key)) or karyawan_dict.get(acc_key, {})
+            alt_id = normalize_clean(raw_nm_str)
+            k_info = karyawan_dict.get((alt_id, proj_cat)) or karyawan_dict.get((acc_key, p_src)) or karyawan_dict.get((alt_id, p_src)) or {}
 
         tl_val = k_info.get("Nama TL", "Unknown")
         bucket_val = k_info.get("Bucket", "Unknown")
-        project_val = k_info.get("Project", proj_key or "Unknown")
+        project_val = k_info.get("Project", p_src or "Unknown")
         status_val = k_info.get("Status Kerja", "Aktif")
 
         is_comp, perush_master = get_master_status(tl_val, bucket_val, project_val)
-
-        if "092026" in str(periode_label) and tl_val == "W-MPT05-2":
-            is_comp = "Tidak"
 
         pen_mtd = m_vals.get("Total Penambahan Hari Ini", 0.0)
         rec_mtd = m_vals.get("Total Penerimaan Hari Ini", 0.0)
         pen_daily = d_vals.get("Total Penambahan Hari Ini", 0.0)
         rec_daily = d_vals.get("Total Penerimaan Hari Ini", 0.0)
 
+        # Akumulasi otomatis: Jika Daily tidak ada, Total bernilai persis sama dengan MTD
         row_item = {
-            "ID Agent": d_vals.get("_raw_id", "") or m_vals.get("_raw_id", "") or k_info.get("ID_Akun_Resmi", "") or acc_key,
-            "Nama Pengguna": d_vals.get("_raw_nama", "") or m_vals.get("_raw_nama", "") or k_info.get("Nama_Orang_Resmi", "") or acc_key,
+            "ID Agent": raw_id_str,
+            "Nama Pengguna": raw_nm_str,
             "Status Kerja": status_val,
             "Nama TL": tl_val,
             "Bucket": bucket_val,
@@ -575,7 +583,7 @@ def build_dual_tables(df_subset, group_col_name, label_entity):
         p_val = first_row.get("Project", "")
         b_val = first_row.get("Bucket", "")
 
-        # Akumulasi penuh MTD + Daily (Total Penambahan Hari Ini_Total)
+        # Akumulasi penuh MTD + Daily
         tot_pen = group["Total Penambahan Hari Ini_Total"].sum()
         tot_rec = group["Total Penerimaan Hari Ini_Total"].sum()
         rec_rate_monthly = (tot_rec / tot_pen * 100) if tot_pen > 0 else 0.0
@@ -813,7 +821,7 @@ def calculate_warning_letter_data(df_period_all, periode_name=""):
     return pd.DataFrame(wl_agents), pd.DataFrame(wl_tls)
 
 # ---------------------------------------------------------
-# TAB UTAMA DASHBOARD (GRAFIK DIHAPUS)
+# TAB UTAMA DASHBOARD
 # ---------------------------------------------------------
 tab_karyawan, tab_perf_team, tab_perf_comp, tab_perf_agent, tab_final, tab_productivity, tab_wl, tab_mpt_history, tab_tl_history = st.tabs([
     "Seluruh Karyawan",
@@ -850,14 +858,14 @@ with tab_karyawan:
     display_full_table(t_view_trans, len(t_view_trans))
 
 # =========================================================
-# TAB 2: PERFORMANCE TEAM
+# TAB 2: PERFORMANCE TEAM (AKURASI TINGGI MTD + DAILY)
 # =========================================================
 with tab_perf_team:
     st.caption("Performance Team (团队组长绩效排行榜) — Tabel Bulanan & Harian")
     render_performance_with_tabs(comp_agents, "Nama TL", "Nama TL")
 
 # =========================================================
-# TAB 3: PERFORMANCE PERUSAHAAN
+# TAB 3: PERFORMANCE PERUSAHAAN (AKURASI TINGGI MTD + DAILY)
 # =========================================================
 with tab_perf_comp:
     st.caption("Performance Perusahaan (各催收机构绩效排行榜) — Tabel Bulanan & Harian")
@@ -881,8 +889,6 @@ with tab_perf_agent:
             rows_d = []
             for _, r in target_df.iterrows():
                 st_kerja = r.get("Status Kerja", "Aktif")
-                
-                # Akumulasi penuh MTD + Daily per agen
                 pen_m = r["Total Penambahan Hari Ini_Total"]
                 rec_m = r["Total Penerimaan Hari Ini_Total"]
                 rate_m = (rec_m / pen_m * 100) if pen_m > 0 else 0.0
@@ -1162,11 +1168,12 @@ with tab_productivity:
                 id_raw = str(r.get("Nama Pengguna", "")).strip()
                 nm_raw = str(r.get("Nama", "")).strip()
                 proj_src = r.get("_source_project", "")
+                p_cat = "SK" if "SK" in proj_src else "LD"
 
                 id_clean = normalize_clean(id_raw)
                 nm_clean = normalize_clean(nm_raw)
 
-                k_info = karyawan_dict.get((id_clean, proj_src)) or karyawan_dict.get((nm_clean, proj_src)) or karyawan_dict.get(id_clean) or karyawan_dict.get(nm_clean) or {}
+                k_info = karyawan_dict.get((id_clean, p_cat)) or karyawan_dict.get((nm_clean, p_cat)) or karyawan_dict.get((id_clean, proj_src)) or {}
                 
                 tl_name = k_info.get("Nama TL", "Unknown")
                 bucket_name = k_info.get("Bucket", "Unknown")
@@ -1230,8 +1237,8 @@ with tab_productivity:
                     st.markdown(team_header, unsafe_allow_html=True)
 
                     html_tbl = [
-                        '<div style="width: 100%; overflow-x: auto; margin-bottom: 1.2rem; border: 1px solid #334155; border-radius: 4px;">'
-                        '<table style="width: 100%; border-collapse: separate; border-spacing: 0; font-family: -apple-system, sans-serif; font-size: 0.82rem; text-align: center;">'
+                        '<div style="width: 100%; overflow-x: auto; margin-bottom: 1.2rem; border: 1.5px solid #94a3b8; border-radius: 4px; background-color: #ffffff;">'
+                        '<table style="width: 100%; border-collapse: separate; border-spacing: 0; font-family: -apple-system, sans-serif; font-size: 0.82rem; text-align: center; background-color: #ffffff;">'
                         '<thead><tr>'
                         '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">No</th>'
                         '<th style="background-color: #064e3b; color: #ecfdf5; padding: 7px 4px; border-right: 1px solid #047857;">ID Agent</th>'
@@ -1250,25 +1257,25 @@ with tab_productivity:
                     group_sorted = group.sort_values(by="Rec_Rate", ascending=False).reset_index(drop=True)
 
                     for idx, row in group_sorted.iterrows():
-                        c_call = "color: #ef4444; font-weight: bold;" if row["Calls"] < tg["call"] else "color: inherit;"
-                        c_work = "color: #ef4444; font-weight: bold;" if row["Work_Time"] < tg["work"] else "color: inherit;"
-                        c_covcall = "color: #ef4444; font-weight: bold;" if row["Cov_Call"] < tg["cov_call"] else "color: inherit;"
-                        c_covsms = "color: #ef4444; font-weight: bold;" if row["Cov_SMS"] < tg["cov_sms"] else "color: inherit;"
-                        c_waba = "color: #ef4444; font-weight: bold;" if row["WABA"] < tg["waba"] else "color: inherit;"
-                        c_rec = "color: #ef4444; font-weight: bold;" if row["Rec_Rate"] < tg["rec_rate"] else "color: inherit;"
+                        c_call = "color: #ef4444; font-weight: bold;" if row["Calls"] < tg["call"] else "color: #0f172a;"
+                        c_work = "color: #ef4444; font-weight: bold;" if row["Work_Time"] < tg["work"] else "color: #0f172a;"
+                        c_covcall = "color: #ef4444; font-weight: bold;" if row["Cov_Call"] < tg["cov_call"] else "color: #0f172a;"
+                        c_covsms = "color: #ef4444; font-weight: bold;" if row["Cov_SMS"] < tg["cov_sms"] else "color: #0f172a;"
+                        c_waba = "color: #ef4444; font-weight: bold;" if row["WABA"] < tg["waba"] else "color: #0f172a;"
+                        c_rec = "color: #ef4444; font-weight: bold;" if row["Rec_Rate"] < tg["rec_rate"] else "color: #0f172a;"
 
                         row_html = (
-                            f'<tr style="border-bottom: 1px solid #1e293b;">'
-                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155;">{idx+1}</td>'
-                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155; font-weight: 600;">{row["ID Agent"]}</td>'
-                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155;">{row["Nama Pengguna"]}</td>'
-                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155; {c_call}">{int(row["Calls"]):,}</td>'
-                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155; {c_work}">{row["Work_Time"]:.2f}</td>'
-                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155; {c_covcall}">{row["Cov_Call"]:.2f}%</td>'
-                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155; {c_covsms}">{row["Cov_SMS"]:.2f}%</td>'
-                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155; {c_waba}">{int(row["WABA"]):,}</td>'
-                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155;">{format_num(row["Penambahan"], is_currency=True)}</td>'
-                            f'<td style="padding: 5px 4px; border-right: 1px solid #334155;">{format_num(row["Penerimaan"], is_currency=True)}</td>'
+                            f'<tr style="border-bottom: 1px solid #cbd5e1;">'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #cbd5e1;">{idx+1}</td>'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #cbd5e1; font-weight: 600;">{row["ID Agent"]}</td>'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #cbd5e1;">{row["Nama Pengguna"]}</td>'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #cbd5e1; {c_call}">{int(row["Calls"]):,}</td>'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #cbd5e1; {c_work}">{row["Work_Time"]:.2f}</td>'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #cbd5e1; {c_covcall}">{row["Cov_Call"]:.2f}%</td>'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #cbd5e1; {c_covsms}">{row["Cov_SMS"]:.2f}%</td>'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #cbd5e1; {c_waba}">{int(row["WABA"]):,}</td>'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #cbd5e1;">{format_num(row["Penambahan"], is_currency=True)}</td>'
+                            f'<td style="padding: 5px 4px; border-right: 1px solid #cbd5e1;">{format_num(row["Penerimaan"], is_currency=True)}</td>'
                             f'<td style="padding: 5px 4px; {c_rec}">{row["Rec_Rate"]:.2f}%</td>'
                             f'</tr>'
                         )
@@ -1313,8 +1320,6 @@ with tab_wl:
         import io
 
         wl_period_keys = sorted(wl_dict.keys(), key=lambda x: [int(n) for n in re.findall(r"\d+", x)] or [0])
-        
-        # 1. Pilihan Periode Evaluasi & Tombol Download
         col_w1, col_w2, col_w3 = st.columns([2, 2.5, 1.5])
         with col_w1:
             selected_wl_period = st.selectbox("Pilih Periode Mingguan (Agent WL):", wl_period_keys, key="sel_wl_period")
@@ -1344,9 +1349,6 @@ with tab_wl:
             with col_w2:
                 st.caption("ℹ️ Warning Letter TL dievaluasi setiap 2 minggu")
 
-        # ---------------------------------------------------------
-        # 2. FILTER HANYA KOLOM YANG TERTAMPIL DI TABEL LAYAR
-        # ---------------------------------------------------------
         cols_display_ag = [
             "Project", "Bucket", "Rank", "ID Agent", "Nama Pengguna", 
             "Nama TL", "Peringkat di Bucket", "Total Penambahan (Periode)", 
@@ -1390,9 +1392,6 @@ with tab_wl:
                 use_container_width=True,
             )
 
-        # ---------------------------------------------------------
-        # 3. TAMPILAN TABEL SUB-TAB SESUAI DIVISI / BUCKET
-        # ---------------------------------------------------------
         wl_sub_tabs = st.tabs([label for label, _, _ in TARGET_BUCKETS])
 
         def render_wl_tables(df_target_ag, df_target_tl, title_text=None):
