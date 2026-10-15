@@ -4,7 +4,6 @@ import re
 from datetime import datetime
 import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
 
 # ---------------------------------------------------------
 # KONFIGURASI HALAMAN
@@ -216,7 +215,7 @@ def format_num(val, is_currency=False):
 def normalize_clean(val):
     if pd.isna(val):
         return ""
-    # Ganti non-breaking space (\xa0) dan spasi ganda
+    # Menghapus spasi non-breaking space (\xa0) dan merapikan spasi ganda
     cleaned = str(val).replace("\xa0", " ").strip().upper()
     return " ".join(cleaned.split())
 
@@ -320,11 +319,9 @@ def scan_rawdata_files(folder_path):
             wl_key = m_wl.group(1)
             wl_files.setdefault(wl_key, []).append(f)
         elif m_start_digits:
-            # File bulanan final murni (misal: 092026-SK.xlsx, 092026-LD.xlsx)
             periode = m_start_digits.group(1)
             final_files.setdefault(periode, []).append(f)
         elif "MTD" in clean_name:
-            # File MTD berjalan (JANGAN dimasukkan ke final_files agar tidak terakumulasi ganda)
             raw_mtd_files.append(f)
         else:
             raw_daily_files.append(f)
@@ -578,17 +575,9 @@ def build_dual_tables(df_subset, group_col_name, label_entity):
         p_val = first_row.get("Project", "")
         b_val = first_row.get("Bucket", "")
 
-        # Prioritaskan berkas MTD murni jika ada (agar tidak terakumulasi dobel dengan daily)
-        pen_mtd_sum = group["Total Penambahan Hari Ini_MTD"].sum()
-        rec_mtd_sum = group["Total Penerimaan Hari Ini_MTD"].sum()
-        
-        if pen_mtd_sum > 0:
-            tot_pen = pen_mtd_sum
-            tot_rec = rec_mtd_sum
-        else:
-            tot_pen = group["Total Penambahan Hari Ini_Total"].sum()
-            tot_rec = group["Total Penerimaan Hari Ini_Total"].sum()
-
+        # Akumulasi penuh MTD + Daily (Total Penambahan Hari Ini_Total)
+        tot_pen = group["Total Penambahan Hari Ini_Total"].sum()
+        tot_rec = group["Total Penerimaan Hari Ini_Total"].sum()
         rec_rate_monthly = (tot_rec / tot_pen * 100) if tot_pen > 0 else 0.0
 
         rows_monthly.append({
@@ -824,15 +813,14 @@ def calculate_warning_letter_data(df_period_all, periode_name=""):
     return pd.DataFrame(wl_agents), pd.DataFrame(wl_tls)
 
 # ---------------------------------------------------------
-# TAB UTAMA DASHBOARD
+# TAB UTAMA DASHBOARD (GRAFIK DIHAPUS)
 # ---------------------------------------------------------
-tab_karyawan, tab_perf_team, tab_perf_comp, tab_perf_agent, tab_final, tab_chart_final, tab_productivity, tab_wl, tab_mpt_history, tab_tl_history = st.tabs([
+tab_karyawan, tab_perf_team, tab_perf_comp, tab_perf_agent, tab_final, tab_productivity, tab_wl, tab_mpt_history, tab_tl_history = st.tabs([
     "Seluruh Karyawan",
     "Performance Team",
     "Performance Perusahaan",
     "Agent Performance",
     "Data Bulanan Final",
-    "📈 Grafik Performa Perusahaan",
     "🎯 Produktivitas Harian Agen",
     "Warning Letter",
     "Rekam Jejak Agen MPT05",
@@ -894,14 +882,9 @@ with tab_perf_agent:
             for _, r in target_df.iterrows():
                 st_kerja = r.get("Status Kerja", "Aktif")
                 
-                # Gunakan data MTD murni jika ada
-                if r.get("Total Penambahan Hari Ini_MTD", 0.0) > 0:
-                    pen_m = r["Total Penambahan Hari Ini_MTD"]
-                    rec_m = r["Total Penerimaan Hari Ini_MTD"]
-                else:
-                    pen_m = r["Total Penambahan Hari Ini_Total"]
-                    rec_m = r["Total Penerimaan Hari Ini_Total"]
-                    
+                # Akumulasi penuh MTD + Daily per agen
+                pen_m = r["Total Penambahan Hari Ini_Total"]
+                rec_m = r["Total Penerimaan Hari Ini_Total"]
                 rate_m = (rec_m / pen_m * 100) if pen_m > 0 else 0.0
 
                 rows_m.append({
@@ -1089,114 +1072,7 @@ with tab_final:
             st.write("")
 
 # =========================================================
-# TAB 6: GRAFIK PERFORMA PERUSAHAAN (SESUAI IMAGE 1)
-# =========================================================
-with tab_chart_final:
-    st.caption("Visualisasi Tren Kenaikan & Penurunan Recovery Rate Antar Perusahaan per Divisi/Bucket (月度催收机构趋势图)")
-
-    if not periods_data:
-        st.info("Belum ada data bulanan final untuk ditampilkan dalam grafik.")
-    else:
-        target_groups = [("SK", "D0"), ("SK", "S1"), ("LD", "S0"), ("LD", "S1"), ("LD-BA", "S1"), ("LD-C", "C")]
-        period_keys = list(periods_data.keys())
-
-        short_labels = []
-        for pk in period_keys:
-            if "MTD" in pk:
-                short_labels.append("MTD Berjalan")
-            else:
-                m_match = re.search(r"(\d{2})", pk)
-                short_labels.append(f"Bln {m_match.group(1)}" if m_match else pk)
-
-        line_colors = ["#2563eb", "#ea580c", "#16a34a", "#dc2626", "#9333ea", "#0891b2", "#d97706"]
-
-        for proj, buck in target_groups:
-            has_data = any(
-                not periods_data[k][(periods_data[k]["Project"] == proj) & (periods_data[k]["Bucket"] == buck)].empty
-                for k in period_keys
-            )
-            if not has_data:
-                continue
-
-            all_companies = set()
-            for pk in period_keys:
-                df_slice = periods_data[pk][(periods_data[pk]["Project"] == proj) & (periods_data[pk]["Bucket"] == buck)]
-                for comp in df_slice["Perusahaan"].dropna().unique():
-                    if comp and comp != "Non-Kompetisi":
-                        all_companies.add(comp)
-
-            sorted_companies = sorted(list(all_companies))
-            if not sorted_companies:
-                continue
-
-            company_rates = {c: [] for c in sorted_companies}
-            for c in sorted_companies:
-                for pk in period_keys:
-                    df_slice = periods_data[pk][(periods_data[pk]["Project"] == proj) & (periods_data[pk]["Bucket"] == buck) & (periods_data[pk]["Perusahaan"] == c)]
-                    if not df_slice.empty:
-                        pen = df_slice["Total Penambahan Hari Ini_Total"].sum()
-                        rec = df_slice["Total Penerimaan Hari Ini_Total"].sum()
-                        rate = (rec / pen * 100.0) if pen > 0 else 0.0
-                    else:
-                        rate = 0.0
-                    company_rates[c].append(rate)
-
-            fig, ax = plt.subplots(figsize=(9, 4.8), dpi=130)
-            table_cells = []
-            row_labels = []
-
-            for idx, c in enumerate(sorted_companies):
-                vals = company_rates[c]
-                clr = line_colors[idx % len(line_colors)]
-                
-                ax.plot(short_labels, vals, marker="o", markersize=6, linewidth=2.8, label=c, color=clr)
-
-                for x_idx, y_val in enumerate(vals):
-                    if y_val > 0:
-                        ax.text(
-                            x_idx,
-                            y_val + 0.35,
-                            f"{y_val:.2f}%".replace(".", ","),
-                            ha="center",
-                            va="bottom",
-                            fontsize=9,
-                            fontweight="bold",
-                            color="#1e293b",
-                        )
-
-                table_cells.append([f"{v:.2f}%".replace(".", ",") if v > 0 else "-" for v in vals])
-                row_labels.append(c)
-
-            chart_title = f"{proj} - {buck}"
-            ax.set_title(chart_title, fontsize=13, fontweight="bold", pad=14, color="#0f172a")
-            ax.set_ylabel("Recovery Rate", fontsize=10, fontweight="bold")
-            ax.grid(axis="y", linestyle="--", alpha=0.5, color="#94a3b8")
-            ax.tick_params(axis="x", labelsize=10)
-
-            all_vals = [v for vals in company_rates.values() for v in vals if v > 0]
-            if all_vals:
-                min_y = max(0, min(all_vals) - 4)
-                max_y = max(all_vals) + 5
-                ax.set_ylim(min_y, max_y)
-
-            cell_table = ax.table(
-                cellText=table_cells,
-                rowLabels=row_labels,
-                colLabels=short_labels,
-                loc="bottom",
-                bbox=[0.0, -0.42, 1.0, 0.30]
-            )
-            cell_table.auto_set_font_size(False)
-            cell_table.set_fontsize(8.5)
-            cell_table.scale(1, 1.25)
-            plt.subplots_adjust(bottom=0.32)
-
-            st.pyplot(fig)
-            plt.close(fig)
-            st.markdown("---")
-
-# =========================================================
-# TAB 7: PRODUKTIVITAS HARIAN AGEN (MPT05 DAILY PRODUCTIVITY)
+# TAB 6: PRODUKTIVITAS HARIAN AGEN (MPT05 DAILY PRODUCTIVITY)
 # =========================================================
 with tab_productivity:
     st.markdown("### 🎯 **Produktivitas Harian Agen MPT05 (Agent Daily Productivity)**")
@@ -1426,7 +1302,7 @@ with tab_productivity:
                     st.markdown("".join(html_tbl), unsafe_allow_html=True)
 
 # =========================================================
-# TAB 8: WARNING LETTER (DENGAN BUTTON DOWNLOAD EXCEL)
+# TAB 7: WARNING LETTER (DENGAN BUTTON DOWNLOAD EXCEL)
 # =========================================================
 with tab_wl:
     st.caption("Daftar Warning Letter untuk Agen dan Team Leader (警告信名单)")
@@ -1482,7 +1358,6 @@ with tab_wl:
             "Total Penerimaan (Periode)", "Recovery Rate (%)", "Status WL"
         ]
 
-        # Ambil hanya kolom yang tertampil
         df_export_ag = pd.DataFrame()
         if df_wl_ag is not None and not df_wl_ag.empty:
             exist_ag = [c for c in cols_display_ag if c in df_wl_ag.columns]
@@ -1493,7 +1368,6 @@ with tab_wl:
             exist_tl = [c for c in cols_display_tl if c in df_wl_tl.columns]
             df_export_tl = df_wl_tl[exist_tl].rename(columns={"Peringkat di Bucket": "Rank / Total"})
 
-        # Buat file Excel (.xlsx) di memory buffer
         excel_buffer = io.BytesIO()
         with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
             if not df_export_ag.empty:
@@ -1506,9 +1380,8 @@ with tab_wl:
             else:
                 pd.DataFrame({"Keterangan": ["Tidak ada TL MPT05 yang terkena WL"]}).to_excel(writer, sheet_name="WL_TL_MPT05", index=False)
 
-        # Tombol Download Excel
         with col_w3:
-            st.write("")  # Penyeimbang margin vertikal agar sejajar
+            st.write("")
             st.download_button(
                 label="📥 Unduh Data WL (.xlsx)",
                 data=excel_buffer.getvalue(),
@@ -1597,7 +1470,7 @@ RANK_ORDER = {
 }
 
 # =========================================================
-# TAB 9: REKAM JEJAK HISTORIS AGEN MPT05
+# TAB 8: REKAM JEJAK HISTORIS AGEN MPT05
 # =========================================================
 with tab_mpt_history:
     st.caption("Memantau kinerja agen MPT05. Konsisten TOP HANYA jika di SEMUA bulan masuk dalam Top 30% bucket masing-masing.")
@@ -1703,7 +1576,7 @@ with tab_mpt_history:
             display_full_table(df_hist_ag_trans, len(df_hist_ag_trans))
 
 # =========================================================
-# TAB 10: REKAM JEJAK HISTORIS TEAM LEADER (TL) MPT05
+# TAB 9: REKAM JEJAK HISTORIS TEAM LEADER (TL) MPT05
 # =========================================================
 with tab_tl_history:
     st.caption("Memantau kinerja seluruh Team Leader MPT05 & W-MPT05 lintas bulan (组长月度绩效跟踪).")
