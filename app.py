@@ -355,11 +355,19 @@ def scan_rawdata_files(folder_path):
 df_karyawan, df_master = load_database_and_master(MASTER_FILE)
 final_dict, mtd_files, daily_files, wl_dict = scan_rawdata_files(RAWDATA_DIR)
 
+import subprocess
+
 col_h1, col_h2 = st.columns([3, 1])
 with col_h1:
     st.markdown("### **Performance Collection Automation (催收绩效自动化系统)**")
 with col_h2:
     if st.button("Refresh Data (刷新数据)", use_container_width=True):
+        # 1. Tarik commit & file terbaru yang baru saja di-upload GitHub Action bot
+        try:
+            subprocess.run(["git", "pull"], cwd=BASE_DIR, capture_output=True, text=True, timeout=15)
+        except Exception:
+            pass
+        # 2. Bersihkan cache pembacaan excel dan refresh tampilan
         st.cache_data.clear()
         st.rerun()
 
