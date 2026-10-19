@@ -93,26 +93,29 @@ st.markdown(
     }
 
     .section-banner-title {
-        font-size: 1.15rem;
+        font-size: 1.12rem;
         font-weight: 800;
         letter-spacing: 0.5px;
         color: #0f172a;
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         margin-top: 6px;
-        margin-bottom: 12px;
+        margin-bottom: 10px;
     }
     .section-banner-title::before {
         content: "";
         display: inline-block;
         width: 5px;
-        height: 20px;
+        height: 18px;
         background: #2563eb;
         border-radius: 3px;
     }
     .section-banner-title.tl::before {
-        background: #475569;
+        background: #059669;
+    }
+    .section-banner-title.daily::before {
+        background: #d97706;
     }
     
     .month-header-clean {
@@ -244,7 +247,7 @@ def display_full_table(df_input, fit_content=False):
     ]
     html.append(
         f'<table style="{tbl_css} border-collapse: separate; border-spacing: 0; '
-        'font-size: 0.82rem; text-align: center; background-color: #ffffff;">'
+        'font-size: 0.81rem; text-align: center; background-color: #ffffff;">'
     )
     
     html.append('<thead><tr>')
@@ -252,7 +255,7 @@ def display_full_table(df_input, fit_content=False):
         col_header = str(col).replace("\n", "<br>")
         html.append(
             f'<th style="position: sticky; top: 0; z-index: 5; background: #0f172a; '
-            f'color: #ffffff; padding: 10px 14px; font-weight: 700; white-space: nowrap; line-height: 1.25; vertical-align: middle; '
+            f'color: #ffffff; padding: 9px 12px; font-weight: 700; white-space: nowrap; line-height: 1.25; vertical-align: middle; '
             f'border-bottom: 2.5px solid #020617; border-right: 1px solid #475569; letter-spacing: 0.3px;">{col_header}</th>'
         )
     html.append('</tr></thead><tbody>')
@@ -279,20 +282,20 @@ def display_full_table(df_input, fit_content=False):
             
             if col_name in ["Rank", "Rank<br>(排名)", "Ranking", "Ranking<br>(排名)"]:
                 if val_str in ["#1", "1"]:
-                    val_render = '<span style="background: #fde047; color: #713f12; padding: 2px 8px; border-radius: 9999px; font-weight: 800; font-size: 0.78rem; border: 1px solid #ca8a04;">#1</span>'
+                    val_render = '<span style="background: #fde047; color: #713f12; padding: 2px 7px; border-radius: 9999px; font-weight: 800; font-size: 0.76rem; border: 1px solid #ca8a04;">#1</span>'
                 elif val_str in ["#2", "2"]:
-                    val_render = '<span style="background: #e2e8f0; color: #1e293b; padding: 2px 8px; border-radius: 9999px; font-weight: 800; font-size: 0.78rem; border: 1px solid #94a3b8;">#2</span>'
+                    val_render = '<span style="background: #e2e8f0; color: #1e293b; padding: 2px 7px; border-radius: 9999px; font-weight: 800; font-size: 0.76rem; border: 1px solid #94a3b8;">#2</span>'
                 elif val_str in ["#3", "3"]:
-                    val_render = '<span style="background: #fed7aa; color: #9a3412; padding: 2px 8px; border-radius: 9999px; font-weight: 800; font-size: 0.78rem; border: 1px solid #ea580c;">#3</span>'
+                    val_render = '<span style="background: #fed7aa; color: #9a3412; padding: 2px 7px; border-radius: 9999px; font-weight: 800; font-size: 0.76rem; border: 1px solid #ea580c;">#3</span>'
                 else:
                     val_render = f'<span style="color: #475569; font-weight: 700;">{val_str}</span>'
             elif "GAP" in str(col_name).upper() and val_str.startswith("-") and val_str != "-":
-                val_render = f'<span style="background: #fee2e2; color: #b91c1c; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-family: monospace; border: 1px solid #fca5a5;">{val_str}</span>'
+                val_render = f'<span style="background: #fee2e2; color: #b91c1c; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-family: monospace; border: 1px solid #fca5a5;">{val_str}</span>'
             else:
                 val_render = val_str
 
             html.append(
-                f'<td style="padding: 9px 14px; border-bottom: 1px solid #cbd5e1; border-right: 1px solid #cbd5e1; '
+                f'<td style="padding: 8px 12px; border-bottom: 1px solid #cbd5e1; border-right: 1px solid #cbd5e1; '
                 f'vertical-align: middle; white-space: nowrap; font-variant-numeric: tabular-nums;">{val_render}</td>'
             )
         html.append('</tr>')
@@ -570,7 +573,6 @@ tl_col = "Nama TL" if "Nama TL" in df_karyawan.columns else "Perusahaan"
 bucket_col = "Bucket" if "Bucket" in df_karyawan.columns else "Bucket"
 project_col = "Project" if "Project" in df_karyawan.columns else "Project"
 
-# Mapping Database Karyawan (Project Aware)
 karyawan_dict = {}
 for _, row in df_karyawan.iterrows():
     id_akun = normalize_clean(row.get("ID Pengguna", ""))
@@ -887,7 +889,7 @@ def process_agent_performance_data(mtd_agent_files, daily_files):
     return pd.DataFrame(records)
 
 # ---------------------------------------------------------
-# FUNGSI PEMBANTU (DEKLARASI LENGKAP SEBELUM TABS)
+# FUNGSI PEMBANTU (WARNING LETTER)
 # ---------------------------------------------------------
 def get_tl_wl_cutoff(total_teams):
     if total_teams <= 1: return 0
@@ -1133,10 +1135,11 @@ def render_agent_bucket_tabs(df_agent_source):
 df_agents_processed = process_agent_performance_data(mtd_agent_files, daily_files)
 
 # =========================================================
-# TAB UTAMA: NAVIGASI MENU (DATA KARYAWAN DI-HIDE)
+# TAB UTAMA: NAVIGASI MENU (8 MENU DENGAN TEAM PERFORMANCE)
 # =========================================================
-tab_summary_weekly, tab_agent_senior, tab_agent_junior, tab_productivity, tab_wl, tab_track_agent, tab_track_tl, tab_track_comp = st.tabs([
+tab_summary_weekly, tab_team_perf, tab_agent_senior, tab_agent_junior, tab_productivity, tab_wl, tab_track_agent, tab_track_tl, tab_track_comp = st.tabs([
     "Summary Weekly & Monthly",
+    "Team Performance",
     "Performance Agent (>7 Hari Kerja)",
     "Performance Agent (<=7 Hari Kerja)",
     "Productivity Agents",
@@ -1147,7 +1150,7 @@ tab_summary_weekly, tab_agent_senior, tab_agent_junior, tab_productivity, tab_wl
 ])
 
 # =========================================================
-# MENU 1: SUMMARY WEEKLY & MONTHLY (AUTO ACCUMULATE DAILY)
+# MENU 1: SUMMARY WEEKLY & MONTHLY (LAYOUT 3 ROW)
 # =========================================================
 with tab_summary_weekly:
     if not weekly_dict:
@@ -1155,9 +1158,6 @@ with tab_summary_weekly:
     else:
         summary_order = ["Monthly", "W1", "W2", "W3", "W4"]
         available_periods = [p for p in summary_order if p in weekly_dict]
-
-        weekly_only_periods = [p for p in available_periods if p != "Monthly"]
-        active_running_weekly = weekly_only_periods[-1] if weekly_only_periods else None
 
         weekly_processed = {}
         for p_label in available_periods:
@@ -1170,7 +1170,7 @@ with tab_summary_weekly:
         else:
             sum_sub_tabs = st.tabs([label for label, _, _ in TARGET_BUCKETS])
 
-            def render_division_summary_block(b_filt, p_filt, title_header=None):
+            def render_summary_three_rows_block(b_filt, p_filt, title_header=None):
                 if title_header:
                     st.markdown(f'<div class="clean-group-title">{title_header}</div>', unsafe_allow_html=True)
 
@@ -1186,16 +1186,17 @@ with tab_summary_weekly:
                     st.info(f"Tidak ada data kompetisi untuk divisi {p_filt} - {b_filt}.")
                     return
 
-                # 1. Performa Gabungan Perusahaan (Monthly + Daily)
-                df_monthly_comp = filter_data(weekly_processed.get("Monthly", pd.DataFrame()))
-                comp_summary_df = pd.DataFrame()
-                top_mpt_rank = "-"
-                top_mpt_rate = "-"
-                gap_to_top = "-"
+                df_monthly_base = filter_data(weekly_processed.get("Monthly", pd.DataFrame()))
 
-                if not df_monthly_comp.empty:
+                # -------------------------------------------------
+                # ROW 1 DATA: PERFORMA GABUNGAN PERUSAHAAN
+                # -------------------------------------------------
+                comp_summary_df = pd.DataFrame()
+                top_mpt_rank, top_mpt_rate, gap_to_top = "-", "-", "-"
+
+                if not df_monthly_base.empty:
                     comp_rows = []
-                    for comp_name, grp in df_monthly_comp.groupby("Perusahaan"):
+                    for comp_name, grp in df_monthly_base.groupby("Perusahaan"):
                         pen_file = grp["Total Penambahan"].sum()
                         rec_file = grp["Total Penerimaan"].sum()
 
@@ -1240,6 +1241,7 @@ with tab_summary_weekly:
                             top_mpt_rate = mpt_match.iloc[0]["Recovery Rate (Monthly)"]
                             gap_to_top = mpt_match.iloc[0]["Gap (Rank #1)"]
 
+                # Kartu Metrik
                 card_html = f"""
                 <div class="exec-card-container">
                     <div class="exec-card" style="border-left: 4px solid #2563eb;">
@@ -1258,69 +1260,176 @@ with tab_summary_weekly:
                 """
                 st.markdown(card_html, unsafe_allow_html=True)
 
-                st.markdown('<div class="section-banner-title">机构月度累计绩效</div>', unsafe_allow_html=True)
+                # -------------------------------------------------
+                # ROW 1 TAMPILAN: PERFORMA GABUNGAN PERUSAHAAN (FULL LEBAR)
+                # -------------------------------------------------
+                st.markdown('<div class="section-banner-title">机构月度累计绩效 (Performa Gabungan Perusahaan)</div>', unsafe_allow_html=True)
                 if not comp_summary_df.empty:
-                    cols_c = [
-                        "Rank",
-                        "Perusahaan",
-                        "Total Penambahan (Monthly)",
-                        "Total Penerimaan (Monthly)",
-                        "Recovery Rate (Monthly)",
-                        "Gap (+1 Rank)",
-                        "Gap (Rank #1)",
-                    ]
-                    display_full_table(translate_columns(comp_summary_df[cols_c]), fit_content=True)
+                    cols_c = ["Rank", "Perusahaan", "Total Penambahan (Monthly)", "Total Penerimaan (Monthly)", "Recovery Rate (Monthly)", "Gap (+1 Rank)", "Gap (Rank #1)"]
+                    display_full_table(translate_columns(comp_summary_df[cols_c]))
+                else:
+                    st.caption("Tidak ada data.")
 
                 st.write("")
 
-                # 2. Performa Team Leader
-                st.markdown('<div class="section-banner-title tl">组长周度与月度绩效对比</div>', unsafe_allow_html=True)
-                cols_tl_layout = st.columns(len(available_periods))
+                # -------------------------------------------------
+                # ROW 2 DATA: PERFORMA TL MONTHLY & DAILY
+                # -------------------------------------------------
+                df_tl_monthly = pd.DataFrame()
+                if not df_monthly_base.empty:
+                    tl_m_rows = []
+                    for tl_name, grp in df_monthly_base.groupby("Nama TL"):
+                        c_name = grp.iloc[0].get("Perusahaan", "")
+                        pen_file = grp["Total Penambahan"].sum()
+                        rec_file = grp["Total Penerimaan"].sum()
 
-                for idx, p_label in enumerate(available_periods):
-                    with cols_tl_layout[idx]:
-                        is_monthly_col = (p_label == "Monthly")
-                        is_running_weekly_col = (p_label == active_running_weekly)
-                        
-                        st.markdown(f'<div class="month-header-clean">{p_label}</div>', unsafe_allow_html=True)
-                        df_period_tl = filter_data(weekly_processed.get(p_label, pd.DataFrame()))
+                        d_tl = daily_tl_map.get((p_filt, b_filt, tl_name), {"pen": 0.0, "rec": 0.0})
+                        pen_total = pen_file + d_tl["pen"]
+                        rec_total = rec_file + d_tl["rec"]
+                        rate_total = (rec_total / pen_total * 100) if pen_total > 0 else 0.0
 
-                        if df_period_tl.empty:
-                            st.caption("Tidak ada data (暂无数据)")
-                        else:
-                            tl_card_rows = []
-                            for tl_name, grp in df_period_tl.groupby("Nama TL"):
-                                first_r = grp.iloc[0]
-                                c_name = first_r.get("Perusahaan", "")
-                                pen_val = grp["Total Penambahan"].sum()
-                                rec_val = grp["Total Penerimaan"].sum()
+                        tl_m_rows.append({
+                            "Nama TL": tl_name,
+                            "Perusahaan": c_name,
+                            "_pen_num": pen_total,
+                            "Total Penambahan (Monthly)": format_num(pen_total, is_currency=True),
+                            "Total Penerimaan (Monthly)": format_num(rec_total, is_currency=True),
+                            "_rate_num": rate_total,
+                            "Recovery Rate (Monthly)": f"{rate_total:.2f}%",
+                        })
 
-                                if is_monthly_col or is_running_weekly_col:
-                                    d_tl = daily_tl_map.get((p_filt, b_filt, tl_name), {"pen": 0.0, "rec": 0.0})
-                                    pen_val += d_tl["pen"]
-                                    rec_val += d_tl["rec"]
+                    df_tl_m_temp = pd.DataFrame(tl_m_rows)
+                    if not df_tl_m_temp.empty:
+                        df_tl_m_temp = df_tl_m_temp.sort_values(by="_rate_num", ascending=False).reset_index(drop=True)
+                        gaps_pct_m, gaps_amt_m = ["-"], ["-"]
+                        for i in range(1, len(df_tl_m_temp)):
+                            diff = df_tl_m_temp.loc[i - 1, "_rate_num"] - df_tl_m_temp.loc[i, "_rate_num"]
+                            pen_c = df_tl_m_temp.loc[i, "_pen_num"]
+                            if diff > 0 and pen_c > 0:
+                                gaps_pct_m.append(f"+{diff:.2f}%")
+                                gaps_amt_m.append(f"-{format_num((diff / 100.0) * pen_c, is_currency=True)}")
+                            else:
+                                gaps_pct_m.append("0.00%")
+                                gaps_amt_m.append("-")
 
-                                rate_val = (rec_val / pen_val * 100) if pen_val > 0 else 0.0
+                        df_tl_m_temp["Rank"] = [f"#{i+1}" for i in range(len(df_tl_m_temp))]
+                        df_tl_m_temp["Gap"] = gaps_pct_m
+                        df_tl_m_temp["Gap Amount"] = gaps_amt_m
+                        cols_tl_m = ["Rank", "Nama TL", "Perusahaan", "Total Penambahan (Monthly)", "Total Penerimaan (Monthly)", "Recovery Rate (Monthly)", "Gap", "Gap Amount"]
+                        df_tl_monthly = df_tl_m_temp[cols_tl_m]
 
-                                tl_card_rows.append({
-                                    "Nama TL": tl_name,
-                                    "Perusahaan": c_name,
-                                    "_rate_num": rate_val,
-                                    "Recovery Rate": f"{rate_val:.2f}%",
-                                })
+                df_tl_daily = pd.DataFrame()
+                if not df_monthly_base.empty:
+                    tl_d_rows = []
+                    for tl_name, grp in df_monthly_base.groupby("Nama TL"):
+                        d_tl = daily_tl_map.get((p_filt, b_filt, tl_name), {"pen": 0.0, "rec": 0.0})
+                        d_pen = d_tl["pen"]
+                        d_rec = d_tl["rec"]
+                        d_rate = (d_rec / d_pen * 100) if d_pen > 0 else 0.0
 
-                            df_tl_card = pd.DataFrame(tl_card_rows)
-                            if not df_tl_card.empty:
-                                df_tl_card = df_tl_card.sort_values(by="_rate_num", ascending=False).reset_index(drop=True)
-                                df_tl_card["Rank"] = [f"#{i+1}" for i in range(len(df_tl_card))]
-                                cols_view = ["Rank", "Nama TL", "Perusahaan", "Recovery Rate"]
-                                display_full_table(translate_columns(df_tl_card[cols_view]))
+                        if d_pen > 0:
+                            tl_d_rows.append({
+                                "Nama TL": tl_name,
+                                "_daily_pen": d_pen,
+                                "Penambahan (Hari Ini)": format_num(d_pen, is_currency=True),
+                                "Penerimaan (Hari Ini)": format_num(d_rec, is_currency=True),
+                                "_rate_num": d_rate,
+                                "Recovery Rate (Hari Ini)": f"{d_rate:.2f}%",
+                            })
+
+                    df_tl_d_temp = pd.DataFrame(tl_d_rows)
+                    if not df_tl_d_temp.empty:
+                        df_tl_d_temp = df_tl_d_temp.sort_values(by="_rate_num", ascending=False).reset_index(drop=True)
+                        gaps_pct_d, gaps_amt_d = ["-"], ["-"]
+                        for i in range(1, len(df_tl_d_temp)):
+                            diff_d = df_tl_d_temp.loc[i - 1, "_rate_num"] - df_tl_d_temp.loc[i, "_rate_num"]
+                            pen_dc = df_tl_d_temp.loc[i, "_daily_pen"]
+                            if diff_d > 0 and pen_dc > 0:
+                                gaps_pct_d.append(f"+{diff_d:.2f}%")
+                                gaps_amt_d.append(f"-{format_num((diff_d / 100.0) * pen_dc, is_currency=True)}")
+                            else:
+                                gaps_pct_d.append("0.00%")
+                                gaps_amt_d.append("-")
+
+                        df_tl_d_temp["Rank"] = [f"#{i+1}" for i in range(len(df_tl_d_temp))]
+                        df_tl_d_temp["Gap"] = gaps_pct_d
+                        df_tl_d_temp["Gap Amount"] = gaps_amt_d
+                        cols_tl_d = ["Rank", "Nama TL", "Penambahan (Hari Ini)", "Penerimaan (Hari Ini)", "Recovery Rate (Hari Ini)", "Gap", "Gap Amount"]
+                        df_tl_daily = df_tl_d_temp[cols_tl_d]
+
+                # -------------------------------------------------
+                # ROW 2 TAMPILAN: PERFORMA TL MONTHLY | PERFORMA TL DAILY (2 KOLOM SEJAJAR)
+                # -------------------------------------------------
+                col_r2_left, col_r2_right = st.columns([1, 1], gap="small")
+
+                with col_r2_left:
+                    st.markdown('<div class="section-banner-title tl">组长月度累计绩效 (Performa TL Monthly)</div>', unsafe_allow_html=True)
+                    if not df_tl_monthly.empty:
+                        display_full_table(translate_columns(df_tl_monthly))
+                    else:
+                        st.caption("Tidak ada data.")
+
+                with col_r2_right:
+                    st.markdown('<div class="section-banner-title daily">组长今日实时绩效 (Performa TL Daily)</div>', unsafe_allow_html=True)
+                    if not df_tl_daily.empty:
+                        display_full_table(translate_columns(df_tl_daily))
+                    else:
+                        st.caption("Belum ada data setoran harian hari ini.")
+
+                st.write("")
+
+                # -------------------------------------------------
+                # ROW 3 TAMPILAN: KHUSUS MINGGUAN (WEEKLY 1, 2, 3, 4)
+                # -------------------------------------------------
+                weekly_only_periods = [p for p in available_periods if p != "Monthly"]
+                if weekly_only_periods:
+                    st.markdown('<div class="section-banner-title">组长周度绩效对比 (Performa Weekly 1, 2, 3, 4)</div>', unsafe_allow_html=True)
+                    cols_w_layout = st.columns(len(weekly_only_periods))
+
+                    active_running_w = weekly_only_periods[-1]
+
+                    for idx_w, w_label in enumerate(weekly_only_periods):
+                        with cols_w_layout[idx_w]:
+                            st.markdown(f'<div class="month-header-clean">{w_label}</div>', unsafe_allow_html=True)
+                            df_w_data = filter_data(weekly_processed.get(w_label, pd.DataFrame()))
+
+                            if df_w_data.empty:
+                                st.caption("Tidak ada data (暂无数据)")
+                            else:
+                                is_running = (w_label == active_running_w)
+                                tl_w_rows = []
+                                for tl_name, grp in df_w_data.groupby("Nama TL"):
+                                    c_name = grp.iloc[0].get("Perusahaan", "")
+                                    pen_val = grp["Total Penambahan"].sum()
+                                    rec_val = grp["Total Penerimaan"].sum()
+
+                                    if is_running:
+                                        d_tl = daily_tl_map.get((p_filt, b_filt, tl_name), {"pen": 0.0, "rec": 0.0})
+                                        pen_val += d_tl["pen"]
+                                        rec_val += d_tl["rec"]
+
+                                    rate_val = (rec_val / pen_val * 100) if pen_val > 0 else 0.0
+
+                                    tl_w_rows.append({
+                                        "Nama TL": tl_name,
+                                        "Perusahaan": c_name,
+                                        "_rate_num": rate_val,
+                                        "Recovery Rate": f"{rate_val:.2f}%",
+                                    })
+
+                                df_tl_w_card = pd.DataFrame(tl_w_rows)
+                                if not df_tl_w_card.empty:
+                                    df_tl_w_card = df_tl_w_card.sort_values(by="_rate_num", ascending=False).reset_index(drop=True)
+                                    df_tl_w_card["Rank"] = [f"#{i+1}" for i in range(len(df_tl_w_card))]
+                                    cols_w_view = ["Rank", "Nama TL", "Perusahaan", "Recovery Rate"]
+                                    display_full_table(translate_columns(df_tl_w_card[cols_w_view]))
+
                 st.write("")
 
             for s_tab, (s_label, b_filt, p_filt) in zip(sum_sub_tabs, TARGET_BUCKETS):
                 with s_tab:
                     if b_filt and p_filt:
-                        render_division_summary_block(b_filt, p_filt)
+                        render_summary_three_rows_block(b_filt, p_filt)
                     else:
                         actual_divisions = [
                             ("S1 - SK", "S1", "SK"),
@@ -1331,14 +1440,146 @@ with tab_summary_weekly:
                             ("C - LD-C", "C", "LD-C"),
                         ]
                         for div_label, b_div, p_div in actual_divisions:
-                            render_division_summary_block(
+                            render_summary_three_rows_block(
                                 b_div, 
                                 p_div, 
                                 title_header=f"Project (项目): {p_div} &nbsp;|&nbsp; Bucket (阶段): {b_div}"
                             )
 
 # =========================================================
-# MENU 2: PERFORMANCE AGENT (>7 HARI KERJA)
+# MENU 2: TEAM PERFORMANCE (SEMUA BUCKET TANPA SUB-TAB)
+# =========================================================
+with tab_team_perf:
+    st.caption("Team Performance (团队绩效排行榜) — Performa Bulanan & Harian Seluruh Bucket Tanpa Pemisahan Tab")
+
+    df_monthly_team_all = weekly_processed.get("Monthly", pd.DataFrame()) if "weekly_processed" in locals() and weekly_processed else pd.DataFrame()
+    if df_monthly_team_all.empty and "Monthly" in weekly_dict:
+        df_monthly_team_all = process_department_weekly_data(weekly_dict["Monthly"])
+
+    if df_monthly_team_all.empty:
+        st.info("Belum ada data bulanan di folder `rawdata/Bulanan/`.")
+    else:
+        actual_divisions = [
+            ("S1 - SK", "S1", "SK"),
+            ("D0 - SK", "D0", "SK"),
+            ("S1 - LD", "S1", "LD"),
+            ("S1 - LD-BA", "S1", "LD-BA"),
+            ("S0 - LD", "S0", "LD"),
+            ("C - LD-C", "C", "LD-C"),
+        ]
+
+        for div_label, b_code, p_code in actual_divisions:
+            df_div_base = df_monthly_team_all[
+                (df_monthly_team_all["Bucket"] == b_code) & 
+                (df_monthly_team_all["Project"] == p_code)
+            ]
+            if df_div_base.empty:
+                continue
+
+            st.markdown(f'<div class="clean-group-title">Project: {p_code} &nbsp;|&nbsp; Bucket: {b_code}</div>', unsafe_allow_html=True)
+
+            # 1. Tabel Bulanan Team
+            tl_m_rows = []
+            for tl_name, grp in df_div_base.groupby("Nama TL"):
+                c_name = grp.iloc[0].get("Perusahaan", "")
+                pen_file = grp["Total Penambahan"].sum()
+                rec_file = grp["Total Penerimaan"].sum()
+
+                d_tl = daily_tl_map.get((p_code, b_code, tl_name), {"pen": 0.0, "rec": 0.0})
+                pen_total = pen_file + d_tl["pen"]
+                rec_total = rec_file + d_tl["rec"]
+                rate_total = (rec_total / pen_total * 100) if pen_total > 0 else 0.0
+
+                tl_m_rows.append({
+                    "Project": p_code,
+                    "Bucket": b_code,
+                    "Nama TL": tl_name,
+                    "Perusahaan": c_name,
+                    "_pen_num": pen_total,
+                    "Total Penambahan (Monthly)": format_num(pen_total, is_currency=True),
+                    "Total Penerimaan (Monthly)": format_num(rec_total, is_currency=True),
+                    "_rate_num": rate_total,
+                    "Recovery Rate (Monthly)": f"{rate_total:.2f}%",
+                })
+
+            df_tl_m = pd.DataFrame(tl_m_rows)
+            if not df_tl_m.empty:
+                df_tl_m = df_tl_m.sort_values(by="_rate_num", ascending=False).reset_index(drop=True)
+                gaps_pct_m, gaps_amt_m = ["-"], ["-"]
+                for i in range(1, len(df_tl_m)):
+                    diff = df_tl_m.loc[i - 1, "_rate_num"] - df_tl_m.loc[i, "_rate_num"]
+                    pen_c = df_tl_m.loc[i, "_pen_num"]
+                    if diff > 0 and pen_c > 0:
+                        gaps_pct_m.append(f"+{diff:.2f}%")
+                        gaps_amt_m.append(f"-{format_num((diff / 100.0) * pen_c, is_currency=True)}")
+                    else:
+                        gaps_pct_m.append("0.00%")
+                        gaps_amt_m.append("-")
+
+                df_tl_m["Rank"] = [f"#{i+1}" for i in range(len(df_tl_m))]
+                df_tl_m["Gap"] = gaps_pct_m
+                df_tl_m["Gap Amount"] = gaps_amt_m
+                cols_tl_m = ["Rank", "Project", "Bucket", "Nama TL", "Perusahaan", "Total Penambahan (Monthly)", "Total Penerimaan (Monthly)", "Recovery Rate (Monthly)", "Gap", "Gap Amount"]
+                df_tl_m = df_tl_m[cols_tl_m]
+
+            # 2. Tabel Harian Team
+            tl_d_rows = []
+            for tl_name, grp in df_div_base.groupby("Nama TL"):
+                d_tl = daily_tl_map.get((p_code, b_code, tl_name), {"pen": 0.0, "rec": 0.0})
+                d_pen = d_tl["pen"]
+                d_rec = d_tl["rec"]
+                d_rate = (d_rec / d_pen * 100) if d_pen > 0 else 0.0
+
+                if d_pen > 0:
+                    tl_d_rows.append({
+                        "Nama TL": tl_name,
+                        "_daily_pen": d_pen,
+                        "Penambahan (Hari Ini)": format_num(d_pen, is_currency=True),
+                        "Penerimaan (Hari Ini)": format_num(d_rec, is_currency=True),
+                        "_rate_num": d_rate,
+                        "Recovery Rate (Hari Ini)": f"{d_rate:.2f}%",
+                    })
+
+            df_tl_d = pd.DataFrame(tl_d_rows)
+            if not df_tl_d.empty:
+                df_tl_d = df_tl_d.sort_values(by="_rate_num", ascending=False).reset_index(drop=True)
+                gaps_pct_d, gaps_amt_d = ["-"], ["-"]
+                for i in range(1, len(df_tl_d)):
+                    diff_d = df_tl_d.loc[i - 1, "_rate_num"] - df_tl_d.loc[i, "_rate_num"]
+                    pen_dc = df_tl_d.loc[i, "_daily_pen"]
+                    if diff_d > 0 and pen_dc > 0:
+                        gaps_pct_d.append(f"+{diff_d:.2f}%")
+                        gaps_amt_d.append(f"-{format_num((diff_d / 100.0) * pen_dc, is_currency=True)}")
+                    else:
+                        gaps_pct_d.append("0.00%")
+                        gaps_amt_d.append("-")
+
+                df_tl_d["Rank"] = [f"#{i+1}" for i in range(len(df_tl_d))]
+                df_tl_d["Gap"] = gaps_pct_d
+                df_tl_d["Gap Amount"] = gaps_amt_d
+                cols_tl_d = ["Rank", "Nama TL", "Penambahan (Hari Ini)", "Penerimaan (Hari Ini)", "Recovery Rate (Hari Ini)", "Gap", "Gap Amount"]
+                df_tl_d = df_tl_d[cols_tl_d]
+
+            # Render Bersebelahan
+            c_left, c_right = st.columns([1.15, 1], gap="small")
+            with c_left:
+                st.markdown('<div class="section-banner-title">Performa Bulanan (月度累计绩效)</div>', unsafe_allow_html=True)
+                if not df_tl_m.empty:
+                    display_full_table(translate_columns(df_tl_m))
+                else:
+                    st.caption("Tidak ada data.")
+
+            with c_right:
+                st.markdown('<div class="section-banner-title tl">Performa Harian (今日实时绩效)</div>', unsafe_allow_html=True)
+                if not df_tl_d.empty:
+                    display_full_table(translate_columns(df_tl_d))
+                else:
+                    st.caption("Belum ada data setoran harian hari ini.")
+
+            st.write("")
+
+# =========================================================
+# MENU 3: PERFORMANCE AGENT (>7 HARI KERJA)
 # =========================================================
 with tab_agent_senior:
     st.caption("Performance Agent (>7 Hari Kerja) — Akumulasi MTD + Daily, Berkompetisi Penuh (出勤天数 > 7天坐席排行榜)")
@@ -1352,7 +1593,7 @@ with tab_agent_senior:
         render_agent_bucket_tabs(df_senior)
 
 # =========================================================
-# MENU 3: PERFORMANCE AGENT (<=7 HARI KERJA)
+# MENU 4: PERFORMANCE AGENT (<=7 HARI KERJA)
 # =========================================================
 with tab_agent_junior:
     st.caption("Performance Agent (<=7 Hari Kerja) — Masa Percobaan / Agen Baru (出勤天数 <= 7天坐席排行榜)")
@@ -1365,7 +1606,7 @@ with tab_agent_junior:
         render_agent_bucket_tabs(df_junior)
 
 # =========================================================
-# MENU 4: PRODUCTIVITY AGENTS (MPT05 DAILY TARGET MONITOR)
+# MENU 5: PRODUCTIVITY AGENTS (MPT05 DAILY TARGET MONITOR)
 # =========================================================
 with tab_productivity:
     st.markdown("### 🎯 **Produktivitas Harian Agen MPT05 (Agent Daily Productivity)**")
@@ -1553,7 +1794,7 @@ with tab_productivity:
                             f'<td style="padding: 6px 4px; border-right: 1px solid #cbd5e1;">{row["Connected_Rate"]:.2f}%</td>'
                             f'<td style="padding: 6px 4px; border-right: 1px solid #cbd5e1; {c_work}">{row["Work_Time"]:.2f}</td>'
                             f'<td style="padding: 6px 4px; border-right: 1px solid #cbd5e1; {c_sms}">{int(row["SMS"]):,}</td>'
-                            f'<td style="padding: 6px 4px; border-right: 1px solid #cbd5e1;">{int(row["WABA"]):,}</td>'
+                            f'<td style="padding: 6px 4px; border-right: 1px solid #cbd5e1; {c_waba}">{int(row["WABA"]):,}</td>'
                             f'<td style="padding: 6px 4px; border-right: 1px solid #cbd5e1;">{format_num(row["Penambahan"], is_currency=True)}</td>'
                             f'<td style="padding: 6px 4px; border-right: 1px solid #cbd5e1;">{format_num(row["Penerimaan"], is_currency=True)}</td>'
                             f'<td style="padding: 6px 4px; {c_rec}">{row["Rec_Rate"]:.2f}%</td>'
@@ -1593,7 +1834,7 @@ with tab_productivity:
                     st.markdown("".join(html_tbl), unsafe_allow_html=True)
 
 # =========================================================
-# MENU 5: WARNING LETTER (KHUSUS >7 HARI KERJA)
+# MENU 6: WARNING LETTER (KHUSUS >7 HARI KERJA)
 # =========================================================
 with tab_wl:
     st.caption("Daftar Warning Letter untuk Agen dan Team Leader (警告信名单 — Khusus Agen > 7 Hari Kerja)")
@@ -1699,7 +1940,7 @@ if not df_agents_processed.empty:
     all_period_records[f"Bln {cur_m_str} (MTD)"] = df_agents_processed[df_agents_processed["Apakah Ikut Berkompetisi"] == "Ya"].copy()
 
 # =========================================================
-# MENU 6: TRACK RECORD PERFORMANCE AGENTS
+# MENU 7: TRACK RECORD PERFORMANCE AGENTS
 # =========================================================
 with tab_track_agent:
     st.caption("Memantau rekam jejak historis agen MPT05 lintas bulan dari folder `rawdata/TrackRecordAgent/` + MTD Berjalan.")
@@ -1767,7 +2008,7 @@ with tab_track_agent:
             display_full_table(translate_columns(df_hist_ag))
 
 # =========================================================
-# MENU 7: TRACK RECORD PERFORMANCE TL
+# MENU 8: TRACK RECORD PERFORMANCE TL
 # =========================================================
 with tab_track_tl:
     st.caption("Memantau rekam jejak kinerja seluruh Team Leader MPT05 lintas bulan dari folder `rawdata/Bulanan/`.")
@@ -1840,7 +2081,7 @@ with tab_track_tl:
             display_full_table(translate_columns(df_hist_tl))
 
 # =========================================================
-# MENU 8: TRACK RECORD PERFORMANCE GABUNGAN (TIDAK DOBEL OKTOBER)
+# MENU 9: TRACK RECORD PERFORMANCE GABUNGAN (TIDAK DOBEL OKTOBER)
 # =========================================================
 with tab_track_comp:
     st.caption("Perbandingan Recovery Rate dan Ranking antar Perusahaan bersebelahan lintas bulan (Bulan Final + MTD Berjalan + Daily).")
