@@ -222,10 +222,12 @@ HEADER_TRANSLATIONS = {
     "Kategori Agent": "Kategori Agent<br>(员工属性)",
     "% Agent Baru": "% Agent Baru<br>(新坐席占比)",
     "% Agent Lama": "% Agent Lama<br>(老坐席占比)",
-    "Top 20% (Total Agent)": "Top 20%<br>(前20%坐席)",
-    "20-50% (Total Agent)": "20-50%<br>(20-50%坐席)",
-    "50-70% (Total Agent)": "50-70%<br>(50-70%坐席)",
-    "70-Bottom 20% (Total Agent)": "70-Bottom 20%<br>(后30%坐席)",
+    "Baru: Top 30%": "Baru: Top 30%<br>(新-前30%)",
+    "Baru: Middle 30-70%": "Baru: Mid 30-70%<br>(新-中40%)",
+    "Baru: Bottom 30%": "Baru: Bot 30%<br>(新-后30%)",
+    "Lama: Top 30%": "Lama: Top 30%<br>(老-前30%)",
+    "Lama: Middle 30-70%": "Lama: Mid 30-70%<br>(老-中40%)",
+    "Lama: Bottom 30%": "Lama: Bot 30%<br>(老-后30%)",
     "jadwal_training": "Jadwal Training (Hari & Jam)<br>(培训时间安排)",
     "topic_pembahasan": "Topic Pembahasan<br>(培训主题与要点)",
     "link_meeting": "Link Gmeet / Zoom<br>(线上会议链接)",
@@ -304,10 +306,10 @@ def display_full_table(df_input, fit_content=False):
                     val_render = f'<span style="color: #475569; font-weight: 700;">{val_str}</span>'
             elif "GAP" in str(col_name).upper() and val_str.startswith("-") and val_str != "-":
                 val_render = f'<span style="background: #fee2e2; color: #b91c1c; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-family: monospace; border: 1px solid #fca5a5;">{val_str}</span>'
-            elif "TOP 20%" in val_str.upper():
-                val_render = '<span style="background: #dcfce7; color: #166534; padding: 2px 7px; border-radius: 4px; font-weight: 800;">Top 20%</span>'
-            elif "70-BOTTOM" in val_str.upper():
-                val_render = '<span style="background: #fee2e2; color: #991b1b; padding: 2px 7px; border-radius: 4px; font-weight: 800;">70-Bottom 20%</span>'
+            elif "TOP 30%" in val_str.upper():
+                val_render = '<span style="background: #dcfce7; color: #166534; padding: 2px 7px; border-radius: 4px; font-weight: 800;">Top 30%</span>'
+            elif "BOTTOM 30%" in val_str.upper():
+                val_render = '<span style="background: #fee2e2; color: #991b1b; padding: 2px 7px; border-radius: 4px; font-weight: 800;">Bottom 30%</span>'
             elif "HTTP://" in val_str.upper() or "HTTPS://" in val_str.upper():
                 val_render = f'<a href="{val_str}" target="_blank" style="color: #2563eb; font-weight: 700; text-decoration: underline;">🔗 Buka Link</a>'
             else:
@@ -353,17 +355,16 @@ def map_status_kerja(st_raw):
         return "Aktif"
     return "Resign" if s != "" and s != "nan" else "-"
 
-def get_interval_4cat(rank, total):
+# 3 Kategori Ranking Interval Sederhana Sesuai Permintaan
+def get_interval_3cat(rank, total):
     if total <= 0: return "-"
     pct = rank / total
-    if pct <= 0.20:
-        return "Top 20%"
-    elif pct <= 0.50:
-        return "20-50%"
+    if pct <= 0.30:
+        return "Top 30%"
     elif pct <= 0.70:
-        return "50-70%"
+        return "Middle 30-70%"
     else:
-        return "70-Bottom 20%"
+        return "Bottom 30%"
 
 # ---------------------------------------------------------
 # 1. LOAD DATABASE KARYAWAN & TAB MASTER
@@ -870,7 +871,6 @@ def process_agent_performance_data(mtd_agent_files, daily_files):
         status_val = k_info.get("Status Kerja", "Aktif")
         raw_hiredate = k_info.get("Hiredate", None)
 
-        # Klasifikasi Agen Baru vs Lama Berdasarkan Hiredate
         kat_agent = "Agent Lama"
         hire_str = "-"
         if raw_hiredate is not None and not pd.isna(raw_hiredate):
@@ -946,7 +946,7 @@ def process_agent_performance_data(mtd_agent_files, daily_files):
             for idx_b, (_, r_b) in enumerate(grp_sorted.iterrows()):
                 rk = idx_b + 1
                 rank_map[(r_b["ID Agent"], r_b["Project"])] = f"#{rk}"
-                intv_map[(r_b["ID Agent"], r_b["Project"])] = get_interval_4cat(rk, tot_b)
+                intv_map[(r_b["ID Agent"], r_b["Project"])] = get_interval_3cat(rk, tot_b)
 
         df_res_agents["Rank MTD"] = df_res_agents.apply(lambda r: rank_map.get((r["ID Agent"], r["Project"]), "-"), axis=1)
         df_res_agents["Ranking Interval"] = df_res_agents.apply(lambda r: intv_map.get((r["ID Agent"], r["Project"]), "-"), axis=1)
@@ -1113,7 +1113,7 @@ def render_agent_split_tables(target_agents_df, title_text=None):
     if not df_am.empty:
         df_am = df_am.sort_values(by="_rate_num", ascending=False).reset_index(drop=True)
         total_n = len(df_am)
-        gaps, gaps_amt, intervals = ["-"], ["-"], [get_interval_4cat(1, total_n)]
+        gaps, gaps_amt, intervals = ["-"], ["-"], [get_interval_3cat(1, total_n)]
         for i in range(1, total_n):
             diff = df_am.loc[i - 1, "_rate_num"] - df_am.loc[i, "_rate_num"]
             pen_c = df_am.loc[i, "_tot_pen"]
@@ -1123,7 +1123,7 @@ def render_agent_split_tables(target_agents_df, title_text=None):
             else:
                 gaps.append("0.00%")
                 gaps_amt.append("-")
-            intervals.append(get_interval_4cat(i + 1, total_n))
+            intervals.append(get_interval_3cat(i + 1, total_n))
 
         df_am["Gap"] = gaps
         df_am["Gap Amount"] = gaps_amt
@@ -1137,7 +1137,7 @@ def render_agent_split_tables(target_agents_df, title_text=None):
     if not df_ad.empty:
         df_ad = df_ad.sort_values(by="_rate_num", ascending=False).reset_index(drop=True)
         total_nd = len(df_ad)
-        gaps_d, gaps_amt_d, intervals_d = ["-"], ["-"], [get_interval_4cat(1, total_nd)]
+        gaps_d, gaps_amt_d, intervals_d = ["-"], ["-"], [get_interval_3cat(1, total_nd)]
         for i in range(1, total_nd):
             diff_d = df_ad.loc[i - 1, "_rate_num"] - df_ad.loc[i, "_rate_num"]
             pen_dc = df_ad.loc[i, "_daily_pen"]
@@ -1147,7 +1147,7 @@ def render_agent_split_tables(target_agents_df, title_text=None):
             else:
                 gaps_d.append("0.00%")
                 gaps_amt_d.append("-")
-            intervals_d.append(get_interval_4cat(i + 1, total_nd))
+            intervals_d.append(get_interval_3cat(i + 1, total_nd))
 
         df_ad["Gap"] = gaps_d
         df_ad["Gap Amount"] = gaps_amt_d
@@ -1662,13 +1662,12 @@ with tab_agent_junior:
         render_agent_bucket_tabs(df_junior)
 
 # =========================================================
-# MENU 5: KOMPOSISI AGENT (KHUSUS KOMPETISI & AGENT AKTIF)
+# MENU 5: KOMPOSISI AGENT (1 TABEL UTUH TERKONSOLIDASI)
 # =========================================================
 with tab_agent_comp:
     st.markdown("### 👥 **Komposisi Agent per Team (Khusus Tim Berkompetisi & Agent Aktif)**")
-    st.caption("Menghitung persentase agen baru vs lama (khusus agen aktif) serta sebaran peringkat interval murni antar sesama kompetisi.")
+    st.caption("Hanya menghitung agen AKTIF. Menampilkan persentase Baru vs Lama dan sebaran ranking interval perorangan (Top 30%, Middle 30-70%, Bottom 30%).")
 
-    # 1. Saring HANYA agen yang ikut berkompetisi DAN AKTIF BEKERJA
     df_comp_active_agents = df_agents_processed[
         (df_agents_processed["Apakah Ikut Berkompetisi"] == "Ya") &
         (df_agents_processed["Status Kerja"] == "Aktif")
@@ -1679,7 +1678,7 @@ with tab_agent_comp:
     else:
         comp_sub_tabs = st.tabs([label for label, _, _ in TARGET_BUCKETS])
 
-        def render_composition_block(df_target_comp, title_block=None):
+        def render_consolidated_composition_block(df_target_comp, title_block=None):
             if title_block:
                 st.markdown(f'<div class="clean-group-title">{title_block}</div>', unsafe_allow_html=True)
 
@@ -1687,24 +1686,30 @@ with tab_agent_comp:
                 st.info("Tidak ada data tim kompetisi aktif pada divisi ini.")
                 return
 
-            comp_rows = []
+            rows_consolidated = []
             for (p_c, b_c, tl_c), grp in df_target_comp.groupby(["Project", "Bucket", "Nama TL"]):
                 tot_ag = len(grp)
-                ag_baru = len(grp[grp["Kategori Agent"] == "Agent Baru"])
-                ag_lama = len(grp[grp["Kategori Agent"] == "Agent Lama"])
+                grp_baru = grp[grp["Kategori Agent"] == "Agent Baru"]
+                grp_lama = grp[grp["Kategori Agent"] == "Agent Lama"]
 
-                pct_baru = (ag_baru / tot_ag * 100.0) if tot_ag > 0 else 0.0
-                pct_lama = (ag_lama / tot_ag * 100.0) if tot_ag > 0 else 0.0
+                tot_baru = len(grp_baru)
+                tot_lama = len(grp_lama)
 
-                # 4 Kelompok Interval Murni (HANYA TOTAL QTY AGENT)
-                ag_top20 = len(grp[grp["Ranking Interval"] == "Top 20%"])
-                ag_mid2050 = len(grp[grp["Ranking Interval"] == "20-50%"])
-                ag_mid5070 = len(grp[grp["Ranking Interval"] == "50-70%"])
-                ag_bot70 = len(grp[grp["Ranking Interval"] == "70-Bottom 20%"])
-
+                pct_baru = (tot_baru / tot_ag * 100.0) if tot_ag > 0 else 0.0
+                pct_lama = (tot_lama / tot_ag * 100.0) if tot_ag > 0 else 0.0
                 c_name = grp.iloc[0].get("Perusahaan", "")
 
-                comp_rows.append({
+                # Sebaran 3 Interval untuk Agent Baru
+                baru_top30 = len(grp_baru[grp_baru["Ranking Interval"] == "Top 30%"])
+                baru_mid = len(grp_baru[grp_baru["Ranking Interval"] == "Middle 30-70%"])
+                baru_bot30 = len(grp_baru[grp_baru["Ranking Interval"] == "Bottom 30%"])
+
+                # Sebaran 3 Interval untuk Agent Lama
+                lama_top30 = len(grp_lama[grp_lama["Ranking Interval"] == "Top 30%"])
+                lama_mid = len(grp_lama[grp_lama["Ranking Interval"] == "Middle 30-70%"])
+                lama_bot30 = len(grp_lama[grp_lama["Ranking Interval"] == "Bottom 30%"])
+
+                rows_consolidated.append({
                     "Project": p_c,
                     "Bucket": b_c,
                     "Nama TL": tl_c,
@@ -1712,17 +1717,19 @@ with tab_agent_comp:
                     "Total Agent": tot_ag,
                     "% Agent Baru": f"{pct_baru:.1f}%",
                     "% Agent Lama": f"{pct_lama:.1f}%",
-                    "Top 20% (Total Agent)": ag_top20,
-                    "20-50% (Total Agent)": ag_mid2050,
-                    "50-70% (Total Agent)": ag_mid5070,
-                    "70-Bottom 20% (Total Agent)": ag_bot70,
+                    "Baru: Top 30%": baru_top30,
+                    "Baru: Middle 30-70%": baru_mid,
+                    "Baru: Bottom 30%": baru_bot30,
+                    "Lama: Top 30%": lama_top30,
+                    "Lama: Middle 30-70%": lama_mid,
+                    "Lama: Bottom 30%": lama_bot30,
                 })
 
-            df_comp_table = pd.DataFrame(comp_rows)
-            if not df_comp_table.empty:
-                df_comp_table = df_comp_table.sort_values(by=["Project", "Bucket", "Nama TL"]).reset_index(drop=True)
-                df_comp_table.insert(0, "No", range(1, len(df_comp_table) + 1))
-                display_full_table(translate_columns(df_comp_table))
+            df_consolidated = pd.DataFrame(rows_consolidated)
+            if not df_consolidated.empty:
+                df_consolidated = df_consolidated.sort_values(by=["Project", "Bucket", "Nama TL"]).reset_index(drop=True)
+                df_consolidated.insert(0, "No", range(1, len(df_consolidated) + 1))
+                display_full_table(translate_columns(df_consolidated))
 
         for tab_c, (tab_label, b_filter, p_filter) in zip(comp_sub_tabs, TARGET_BUCKETS):
             with tab_c:
@@ -1731,7 +1738,7 @@ with tab_agent_comp:
                         (df_comp_active_agents["Bucket"] == b_filter) & 
                         (df_comp_active_agents["Project"] == p_filter)
                     ]
-                    render_composition_block(view_c)
+                    render_consolidated_composition_block(view_c)
                 else:
                     actual_divisions = [
                         ("S1 - SK", "S1", "SK"),
@@ -1747,7 +1754,7 @@ with tab_agent_comp:
                             (df_comp_active_agents["Project"] == p_c)
                         ]
                         if not sub_view.empty:
-                            render_composition_block(sub_view, f"Project: {p_c} &nbsp;|&nbsp; Bucket: {b_c} ({len(sub_view)} Agent Aktif)")
+                            render_consolidated_composition_block(sub_view, f"Project: {p_c} &nbsp;|&nbsp; Bucket: {b_c} ({len(sub_view)} Agent Aktif)")
 
         with st.expander("🔍 **Detail Perorangan Agent Aktif (Hiredate, Kategori & Interval Ranking)**", expanded=False):
             cols_ag_detail = [
@@ -1774,7 +1781,6 @@ with tab_training:
     st.markdown("### 📅 **Schedule Training Team Leader ke Agent (Khusus MPT05)**")
     st.caption("Jadwal dan topik pembahasan training internal MPT05. Dilengkapi proteksi password untuk edit/tambah jadwal.")
 
-    # 1. Load Data Jadwal Training Tersimpan
     def load_training_data():
         if os.path.exists(TRAINING_FILE):
             try:
@@ -1793,7 +1799,6 @@ with tab_training:
 
     training_records = load_training_data()
 
-    # Daftar TL Khusus MPT05
     mpt05_tls_list = [
         "MPT05-TL-001 (S1 - SK)",
         "MPT05-TL-002 (S1 - SK)",
@@ -1850,7 +1855,6 @@ with tab_training:
                     if not in_jadwal or not in_topik:
                         st.warning("Mohon lengkapi Jadwal dan Topic Pembahasan!")
                     else:
-                        # Cari apakah TL ini sudah ada di records, jika ada update, jika belum tambah
                         tl_name_clean = sel_tl.split(" (")[0]
                         existing_idx = next((i for i, r in enumerate(training_records) if r.get("Nama Team Leader") == tl_name_clean), -1)
 
@@ -1873,42 +1877,27 @@ with tab_training:
                         st.rerun()
 
     # Tampilkan Tabel Jadwal Training
-    if not training_records:
-        # Tampilkan template default kosong jika belum ada input
-        default_rows = []
-        for tl_str in mpt05_tls_list:
-            tl_n = tl_str.split(" (")[0]
-            div_n = tl_str.split(" (")[1].replace(")", "") if " (" in tl_str else "-"
-            default_rows.append({
+    records_map = {r.get("Nama Team Leader"): r for r in training_records}
+    final_tr_rows = []
+    for tl_str in mpt05_tls_list:
+        tl_n = tl_str.split(" (")[0]
+        if tl_n in records_map:
+            r_item = records_map[tl_n]
+            final_tr_rows.append({
+                "Nama Team Leader": tl_n,
+                "jadwal_training": r_item.get("jadwal_training", "-"),
+                "topic_pembahasan": r_item.get("topic_pembahasan", "-"),
+                "link_meeting": r_item.get("link_meeting", "-"),
+            })
+        else:
+            final_tr_rows.append({
                 "Nama Team Leader": tl_n,
                 "jadwal_training": "Belum Dijadwalkan",
                 "topic_pembahasan": "Belum Diisi oleh TL",
                 "link_meeting": "-",
             })
-        df_tr_view = pd.DataFrame(default_rows)
-    else:
-        # Gabungkan dengan daftar lengkap TL MPT05 agar semua TL tetap tampil
-        records_map = {r.get("Nama Team Leader"): r for r in training_records}
-        final_tr_rows = []
-        for tl_str in mpt05_tls_list:
-            tl_n = tl_str.split(" (")[0]
-            if tl_n in records_map:
-                r_item = records_map[tl_n]
-                final_tr_rows.append({
-                    "Nama Team Leader": tl_n,
-                    "jadwal_training": r_item.get("jadwal_training", "-"),
-                    "topic_pembahasan": r_item.get("topic_pembahasan", "-"),
-                    "link_meeting": r_item.get("link_meeting", "-"),
-                })
-            else:
-                final_tr_rows.append({
-                    "Nama Team Leader": tl_n,
-                    "jadwal_training": "Belum Dijadwalkan",
-                    "topic_pembahasan": "Belum Diisi oleh TL",
-                    "link_meeting": "-",
-                })
-        df_tr_view = pd.DataFrame(final_tr_rows)
 
+    df_tr_view = pd.DataFrame(final_tr_rows)
     df_tr_view.insert(0, "No", range(1, len(df_tr_view) + 1))
     display_full_table(translate_columns(df_tr_view))
 
@@ -2312,7 +2301,7 @@ with tab_track_agent:
         df_hist_ag = pd.DataFrame(history_rows)
         if df_hist_ag.empty: st.info("Tidak ada data agen MPT05.")
         else:
-            # PENGURUTAN: AKTIF DI ATAS (KONSISTEN TOP S/D DATA BARU), RESIGN DI PALING BAWAH
+            # PENGURUTAN: AKTIF DI ATAS, RESIGN DI PALING BAWAH
             df_hist_ag = df_hist_ag.sort_values(
                 by=["_is_resign", "_order_val", "_avg_sort"],
                 ascending=[True, True, False]
