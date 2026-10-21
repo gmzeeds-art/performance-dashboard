@@ -3,6 +3,7 @@ import glob
 import re
 import subprocess
 import io
+import json
 from datetime import datetime
 import pandas as pd
 import streamlit as st
@@ -41,9 +42,9 @@ st.markdown(
         padding-bottom: 2px;
     }
     .stTabs [data-baseweb="tab"] {
-        padding: 8px 16px;
+        padding: 8px 15px;
         font-weight: 600;
-        font-size: 0.85rem;
+        font-size: 0.83rem;
         color: #64748b;
         border-radius: 6px 6px 0 0;
         transition: all 0.2s ease;
@@ -140,6 +141,7 @@ st.markdown(
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RAWDATA_DIR = os.path.join(BASE_DIR, "rawdata")
 MASTER_FILE = os.path.join(BASE_DIR, "data_karyawan.xlsx")
+TRAINING_FILE = os.path.join(BASE_DIR, "training_schedule.json")
 os.makedirs(RAWDATA_DIR, exist_ok=True)
 
 TARGET_BUCKETS = [
@@ -188,7 +190,8 @@ HEADER_TRANSLATIONS = {
     "Ranking (Avg)": "Ranking Avg<br>(平均排名)",
     "Ranking Interval": "Ranking Interval<br>(排名区间)",
     "Nama TL": "Nama TL<br>(组长姓名)",
-    "Total Agent": "Total Agent<br>(总坐席数)",
+    "Nama Team Leader": "Nama Team Leader<br>(组长姓名)",
+    "Total Agent": "Total Agent Aktif<br>(在职总坐席)",
     "Total Penambahan (Monthly)": "Total Penambahan (M)<br>(月累计新增本金)",
     "Total Penerimaan (Monthly)": "Total Penerimaan (M)<br>(月累计回款总额)",
     "Recovery Rate (Monthly)": "Recovery Rate (M)<br>(月催回率)",
@@ -216,6 +219,16 @@ HEADER_TRANSLATIONS = {
     "Status TL": "Status TL<br>(组长状态)",
     "Rata-rata Rate (All-Time)": "Avg Rate (All-Time)<br>(历史平均催回率)",
     "Analisis Kinerja": "Analisis Kinerja<br>(绩效分析)",
+    "Kategori Agent": "Kategori Agent<br>(员工属性)",
+    "% Agent Baru": "% Agent Baru<br>(新坐席占比)",
+    "% Agent Lama": "% Agent Lama<br>(老坐席占比)",
+    "Top 20% (Total Agent)": "Top 20%<br>(前20%坐席)",
+    "20-50% (Total Agent)": "20-50%<br>(20-50%坐席)",
+    "50-70% (Total Agent)": "50-70%<br>(50-70%坐席)",
+    "70-Bottom 20% (Total Agent)": "70-Bottom 20%<br>(后30%坐席)",
+    "jadwal_training": "Jadwal Training (Hari & Jam)<br>(培训时间安排)",
+    "topic_pembahasan": "Topic Pembahasan<br>(培训主题与要点)",
+    "link_meeting": "Link Gmeet / Zoom<br>(线上会议链接)",
 }
 
 def translate_columns(df):
@@ -291,6 +304,12 @@ def display_full_table(df_input, fit_content=False):
                     val_render = f'<span style="color: #475569; font-weight: 700;">{val_str}</span>'
             elif "GAP" in str(col_name).upper() and val_str.startswith("-") and val_str != "-":
                 val_render = f'<span style="background: #fee2e2; color: #b91c1c; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-family: monospace; border: 1px solid #fca5a5;">{val_str}</span>'
+            elif "TOP 20%" in val_str.upper():
+                val_render = '<span style="background: #dcfce7; color: #166534; padding: 2px 7px; border-radius: 4px; font-weight: 800;">Top 20%</span>'
+            elif "70-BOTTOM" in val_str.upper():
+                val_render = '<span style="background: #fee2e2; color: #991b1b; padding: 2px 7px; border-radius: 4px; font-weight: 800;">70-Bottom 20%</span>'
+            elif "HTTP://" in val_str.upper() or "HTTPS://" in val_str.upper():
+                val_render = f'<a href="{val_str}" target="_blank" style="color: #2563eb; font-weight: 700; text-decoration: underline;">🔗 Buka Link</a>'
             else:
                 val_render = val_str
 
@@ -334,16 +353,17 @@ def map_status_kerja(st_raw):
         return "Aktif"
     return "Resign" if s != "" and s != "nan" else "-"
 
-def get_ranking_interval(rank, total):
+def get_interval_4cat(rank, total):
     if total <= 0: return "-"
     pct = rank / total
-    if pct <= 0.10: return "TOP10%"
-    elif pct <= 0.20: return "10-20%"
-    elif pct <= 0.30: return "20-30%"
-    elif pct <= 0.50: return "30-50%"
-    elif pct <= 0.70: return "50-70%"
-    elif pct <= 0.80: return "70-80%"
-    else: return "BOTTOM20%"
+    if pct <= 0.20:
+        return "Top 20%"
+    elif pct <= 0.50:
+        return "20-50%"
+    elif pct <= 0.70:
+        return "50-70%"
+    else:
+        return "70-Bottom 20%"
 
 # ---------------------------------------------------------
 # 1. LOAD DATABASE KARYAWAN & TAB MASTER
@@ -586,6 +606,7 @@ for _, row in df_karyawan.iterrows():
         "Bucket": str(row.get(bucket_col, "")).strip(),
         "Project": proj_exact,
         "Status Kerja": map_status_kerja(raw_status),
+        "Hiredate": row.get("Hiredate", None),
         "ID_Akun_Resmi": str(row.get("ID Pengguna", "")).strip(),
         "Nama_Orang_Resmi": str(row.get("Nama Pengguna", "")).strip(),
     }
@@ -745,7 +766,7 @@ def process_department_weekly_data(file_list):
     return pd.DataFrame(records)
 
 # ---------------------------------------------------------
-# FUNGSI MEMPROSES PERFORMA AGEN (MTD + DAILY + HARI KERJA)
+# FUNGSI MEMPROSES PERFORMA AGEN (MTD + DAILY + HARI KERJA + HIREDATE)
 # ---------------------------------------------------------
 def process_agent_performance_data(mtd_agent_files, daily_files):
     if not mtd_agent_files and not daily_files:
@@ -826,6 +847,10 @@ def process_agent_performance_data(mtd_agent_files, daily_files):
 
     all_keys = set(mtd_map.keys()).union(set(daily_map.keys()))
     records = []
+    now_dt = datetime.now()
+    cur_year = now_dt.year
+    cur_month = now_dt.month
+
     for (acc_key, proj_cat) in all_keys:
         m_vals = mtd_map.get((acc_key, proj_cat), {})
         d_vals = daily_map.get((acc_key, proj_cat), {})
@@ -843,6 +868,21 @@ def process_agent_performance_data(mtd_agent_files, daily_files):
         bucket_val = k_info.get("Bucket", "Unknown")
         project_val = k_info.get("Project", p_src or "Unknown")
         status_val = k_info.get("Status Kerja", "Aktif")
+        raw_hiredate = k_info.get("Hiredate", None)
+
+        # Klasifikasi Agen Baru vs Lama Berdasarkan Hiredate
+        kat_agent = "Agent Lama"
+        hire_str = "-"
+        if raw_hiredate is not None and not pd.isna(raw_hiredate):
+            try:
+                h_dt = pd.to_datetime(raw_hiredate)
+                hire_str = h_dt.strftime("%Y-%m-%d")
+                if h_dt.year == cur_year and h_dt.month == cur_month:
+                    kat_agent = "Agent Baru"
+                else:
+                    kat_agent = "Agent Lama"
+            except Exception:
+                pass
 
         is_comp, perush_master = get_master_status(tl_val, bucket_val, project_val)
 
@@ -860,11 +900,16 @@ def process_agent_performance_data(mtd_agent_files, daily_files):
             w_days = agent_workdays_map.get((alt_nm_u, proj_bucket_cat), 0)
 
         is_active_today = d_vals.get("_is_active_today", False)
+        tot_pen_agent = pen_mtd + pen_daily
+        tot_rec_agent = rec_mtd + rec_daily
+        rec_rate_num = (tot_rec_agent / tot_pen_agent * 100.0) if tot_pen_agent > 0 else 0.0
 
         row_item = {
             "ID Agent": raw_id_str,
             "Nama Pengguna": raw_nm_str,
             "Status Kerja": status_val,
+            "Hiredate": hire_str,
+            "Kategori Agent": kat_agent,
             "Hari Kerja Angka": w_days,
             "Hari Kerja": f"{w_days} Hari" if w_days > 0 else "-",
             "Nama TL": tl_val,
@@ -872,8 +917,9 @@ def process_agent_performance_data(mtd_agent_files, daily_files):
             "Project": project_val,
             "Perusahaan": perush_master,
             "Apakah Ikut Berkompetisi": is_comp,
-            "Total Penambahan Hari Ini_Total": pen_mtd + pen_daily,
+            "Total Penambahan Hari Ini_Total": tot_pen_agent,
             "Total Penerimaan Hari Ini_Total": rec_mtd + rec_daily,
+            "Recovery Rate Num": rec_rate_num,
             "Total Penambahan Hari Ini_Daily": pen_daily,
             "Total Penerimaan Hari Ini_Daily": rec_daily,
             "Is Active Today": is_active_today,
@@ -886,10 +932,29 @@ def process_agent_performance_data(mtd_agent_files, daily_files):
         }
         records.append(row_item)
 
-    return pd.DataFrame(records)
+    df_res_agents = pd.DataFrame(records)
+
+    # Hitung Ranking dan Ranking Interval Khusus Antar Agen Kompetisi di Divisi Masing-Masing
+    if not df_res_agents.empty:
+        rank_map = {}
+        intv_map = {}
+
+        df_comp_only = df_res_agents[df_res_agents["Apakah Ikut Berkompetisi"] == "Ya"].copy()
+        for (p, b), grp in df_comp_only.groupby(["Project", "Bucket"]):
+            grp_sorted = grp.sort_values(by="Recovery Rate Num", ascending=False)
+            tot_b = len(grp_sorted)
+            for idx_b, (_, r_b) in enumerate(grp_sorted.iterrows()):
+                rk = idx_b + 1
+                rank_map[(r_b["ID Agent"], r_b["Project"])] = f"#{rk}"
+                intv_map[(r_b["ID Agent"], r_b["Project"])] = get_interval_4cat(rk, tot_b)
+
+        df_res_agents["Rank MTD"] = df_res_agents.apply(lambda r: rank_map.get((r["ID Agent"], r["Project"]), "-"), axis=1)
+        df_res_agents["Ranking Interval"] = df_res_agents.apply(lambda r: intv_map.get((r["ID Agent"], r["Project"]), "-"), axis=1)
+
+    return df_res_agents
 
 # ---------------------------------------------------------
-# FUNGSI PEMBANTU (WARNING LETTER)
+# FUNGSI PEMBANTU (WARNING LETTER DI GLOBAL SCOPE)
 # ---------------------------------------------------------
 def get_tl_wl_cutoff(total_teams):
     if total_teams <= 1: return 0
@@ -1048,7 +1113,7 @@ def render_agent_split_tables(target_agents_df, title_text=None):
     if not df_am.empty:
         df_am = df_am.sort_values(by="_rate_num", ascending=False).reset_index(drop=True)
         total_n = len(df_am)
-        gaps, gaps_amt, intervals = ["-"], ["-"], [get_ranking_interval(1, total_n)]
+        gaps, gaps_amt, intervals = ["-"], ["-"], [get_interval_4cat(1, total_n)]
         for i in range(1, total_n):
             diff = df_am.loc[i - 1, "_rate_num"] - df_am.loc[i, "_rate_num"]
             pen_c = df_am.loc[i, "_tot_pen"]
@@ -1058,7 +1123,7 @@ def render_agent_split_tables(target_agents_df, title_text=None):
             else:
                 gaps.append("0.00%")
                 gaps_amt.append("-")
-            intervals.append(get_ranking_interval(i + 1, total_n))
+            intervals.append(get_interval_4cat(i + 1, total_n))
 
         df_am["Gap"] = gaps
         df_am["Gap Amount"] = gaps_amt
@@ -1072,7 +1137,7 @@ def render_agent_split_tables(target_agents_df, title_text=None):
     if not df_ad.empty:
         df_ad = df_ad.sort_values(by="_rate_num", ascending=False).reset_index(drop=True)
         total_nd = len(df_ad)
-        gaps_d, gaps_amt_d, intervals_d = ["-"], ["-"], [get_ranking_interval(1, total_nd)]
+        gaps_d, gaps_amt_d, intervals_d = ["-"], ["-"], [get_interval_4cat(1, total_nd)]
         for i in range(1, total_nd):
             diff_d = df_ad.loc[i - 1, "_rate_num"] - df_ad.loc[i, "_rate_num"]
             pen_dc = df_ad.loc[i, "_daily_pen"]
@@ -1082,7 +1147,7 @@ def render_agent_split_tables(target_agents_df, title_text=None):
             else:
                 gaps_d.append("0.00%")
                 gaps_amt_d.append("-")
-            intervals_d.append(get_ranking_interval(i + 1, total_nd))
+            intervals_d.append(get_interval_4cat(i + 1, total_nd))
 
         df_ad["Gap"] = gaps_d
         df_ad["Gap Amount"] = gaps_amt_d
@@ -1135,13 +1200,15 @@ def render_agent_bucket_tabs(df_agent_source):
 df_agents_processed = process_agent_performance_data(mtd_agent_files, daily_files)
 
 # =========================================================
-# TAB UTAMA: NAVIGASI MENU (8 MENU DENGAN TEAM PERFORMANCE)
+# TAB UTAMA: NAVIGASI MENU (LENGKAP DENGAN TRAINING & KOMPOSISI)
 # =========================================================
-tab_summary_weekly, tab_team_perf, tab_agent_senior, tab_agent_junior, tab_productivity, tab_wl, tab_track_agent, tab_track_tl, tab_track_comp = st.tabs([
+tab_summary_weekly, tab_team_perf, tab_agent_senior, tab_agent_junior, tab_agent_comp, tab_training, tab_productivity, tab_wl, tab_track_agent, tab_track_tl, tab_track_comp = st.tabs([
     "Summary Weekly & Monthly",
     "Team Performance",
     "Performance Agent (>7 Hari Kerja)",
     "Performance Agent (<=7 Hari Kerja)",
+    "Komposisi Agent (Baru vs Lama)",
+    "Schedule Training Team Leader",
     "Productivity Agents",
     "Warning Letter",
     "Track Record Performance Agents",
@@ -1188,9 +1255,7 @@ with tab_summary_weekly:
 
                 df_monthly_base = filter_data(weekly_processed.get("Monthly", pd.DataFrame()))
 
-                # -------------------------------------------------
                 # ROW 1 DATA: PERFORMA GABUNGAN PERUSAHAAN
-                # -------------------------------------------------
                 comp_summary_df = pd.DataFrame()
                 top_mpt_rank, top_mpt_rate, gap_to_top = "-", "-", "-"
 
@@ -1241,7 +1306,6 @@ with tab_summary_weekly:
                             top_mpt_rate = mpt_match.iloc[0]["Recovery Rate (Monthly)"]
                             gap_to_top = mpt_match.iloc[0]["Gap (Rank #1)"]
 
-                # Kartu Metrik
                 card_html = f"""
                 <div class="exec-card-container">
                     <div class="exec-card" style="border-left: 4px solid #2563eb;">
@@ -1260,9 +1324,7 @@ with tab_summary_weekly:
                 """
                 st.markdown(card_html, unsafe_allow_html=True)
 
-                # -------------------------------------------------
                 # ROW 1 TAMPILAN: PERFORMA GABUNGAN PERUSAHAAN (FULL LEBAR)
-                # -------------------------------------------------
                 st.markdown('<div class="section-banner-title">机构月度累计绩效 (Performa Gabungan Perusahaan)</div>', unsafe_allow_html=True)
                 if not comp_summary_df.empty:
                     cols_c = ["Rank", "Perusahaan", "Total Penambahan (Monthly)", "Total Penerimaan (Monthly)", "Recovery Rate (Monthly)", "Gap (+1 Rank)", "Gap (Rank #1)"]
@@ -1272,9 +1334,7 @@ with tab_summary_weekly:
 
                 st.write("")
 
-                # -------------------------------------------------
                 # ROW 2 DATA: PERFORMA TL MONTHLY & DAILY
-                # -------------------------------------------------
                 df_tl_monthly = pd.DataFrame()
                 if not df_monthly_base.empty:
                     tl_m_rows = []
@@ -1357,9 +1417,7 @@ with tab_summary_weekly:
                         cols_tl_d = ["Rank", "Nama TL", "Penambahan (Hari Ini)", "Penerimaan (Hari Ini)", "Recovery Rate (Hari Ini)", "Gap", "Gap Amount"]
                         df_tl_daily = df_tl_d_temp[cols_tl_d]
 
-                # -------------------------------------------------
                 # ROW 2 TAMPILAN: PERFORMA TL MONTHLY | PERFORMA TL DAILY (2 KOLOM SEJAJAR)
-                # -------------------------------------------------
                 col_r2_left, col_r2_right = st.columns([1, 1], gap="small")
 
                 with col_r2_left:
@@ -1378,9 +1436,7 @@ with tab_summary_weekly:
 
                 st.write("")
 
-                # -------------------------------------------------
                 # ROW 3 TAMPILAN: KHUSUS MINGGUAN (WEEKLY 1, 2, 3, 4)
-                # -------------------------------------------------
                 weekly_only_periods = [p for p in available_periods if p != "Monthly"]
                 if weekly_only_periods:
                     st.markdown('<div class="section-banner-title">组长周度绩效对比 (Performa Weekly 1, 2, 3, 4)</div>', unsafe_allow_html=True)
@@ -1606,7 +1662,258 @@ with tab_agent_junior:
         render_agent_bucket_tabs(df_junior)
 
 # =========================================================
-# MENU 5: PRODUCTIVITY AGENTS (MPT05 DAILY TARGET MONITOR)
+# MENU 5: KOMPOSISI AGENT (KHUSUS KOMPETISI & AGENT AKTIF)
+# =========================================================
+with tab_agent_comp:
+    st.markdown("### 👥 **Komposisi Agent per Team (Khusus Tim Berkompetisi & Agent Aktif)**")
+    st.caption("Menghitung persentase agen baru vs lama (khusus agen aktif) serta sebaran peringkat interval murni antar sesama kompetisi.")
+
+    # 1. Saring HANYA agen yang ikut berkompetisi DAN AKTIF BEKERJA
+    df_comp_active_agents = df_agents_processed[
+        (df_agents_processed["Apakah Ikut Berkompetisi"] == "Ya") &
+        (df_agents_processed["Status Kerja"] == "Aktif")
+    ].copy()
+
+    if df_comp_active_agents.empty:
+        st.info("Tidak ada data agen aktif yang terdaftar di Master Kompetisi.")
+    else:
+        comp_sub_tabs = st.tabs([label for label, _, _ in TARGET_BUCKETS])
+
+        def render_composition_block(df_target_comp, title_block=None):
+            if title_block:
+                st.markdown(f'<div class="clean-group-title">{title_block}</div>', unsafe_allow_html=True)
+
+            if df_target_comp.empty:
+                st.info("Tidak ada data tim kompetisi aktif pada divisi ini.")
+                return
+
+            comp_rows = []
+            for (p_c, b_c, tl_c), grp in df_target_comp.groupby(["Project", "Bucket", "Nama TL"]):
+                tot_ag = len(grp)
+                ag_baru = len(grp[grp["Kategori Agent"] == "Agent Baru"])
+                ag_lama = len(grp[grp["Kategori Agent"] == "Agent Lama"])
+
+                pct_baru = (ag_baru / tot_ag * 100.0) if tot_ag > 0 else 0.0
+                pct_lama = (ag_lama / tot_ag * 100.0) if tot_ag > 0 else 0.0
+
+                # 4 Kelompok Interval Murni (HANYA TOTAL QTY AGENT)
+                ag_top20 = len(grp[grp["Ranking Interval"] == "Top 20%"])
+                ag_mid2050 = len(grp[grp["Ranking Interval"] == "20-50%"])
+                ag_mid5070 = len(grp[grp["Ranking Interval"] == "50-70%"])
+                ag_bot70 = len(grp[grp["Ranking Interval"] == "70-Bottom 20%"])
+
+                c_name = grp.iloc[0].get("Perusahaan", "")
+
+                comp_rows.append({
+                    "Project": p_c,
+                    "Bucket": b_c,
+                    "Nama TL": tl_c,
+                    "Perusahaan": c_name,
+                    "Total Agent": tot_ag,
+                    "% Agent Baru": f"{pct_baru:.1f}%",
+                    "% Agent Lama": f"{pct_lama:.1f}%",
+                    "Top 20% (Total Agent)": ag_top20,
+                    "20-50% (Total Agent)": ag_mid2050,
+                    "50-70% (Total Agent)": ag_mid5070,
+                    "70-Bottom 20% (Total Agent)": ag_bot70,
+                })
+
+            df_comp_table = pd.DataFrame(comp_rows)
+            if not df_comp_table.empty:
+                df_comp_table = df_comp_table.sort_values(by=["Project", "Bucket", "Nama TL"]).reset_index(drop=True)
+                df_comp_table.insert(0, "No", range(1, len(df_comp_table) + 1))
+                display_full_table(translate_columns(df_comp_table))
+
+        for tab_c, (tab_label, b_filter, p_filter) in zip(comp_sub_tabs, TARGET_BUCKETS):
+            with tab_c:
+                if b_filter and p_filter:
+                    view_c = df_comp_active_agents[
+                        (df_comp_active_agents["Bucket"] == b_filter) & 
+                        (df_comp_active_agents["Project"] == p_filter)
+                    ]
+                    render_composition_block(view_c)
+                else:
+                    actual_divisions = [
+                        ("S1 - SK", "S1", "SK"),
+                        ("D0 - SK", "D0", "SK"),
+                        ("S1 - LD", "S1", "LD"),
+                        ("S1 - LD-BA", "S1", "LD-BA"),
+                        ("S0 - LD", "S0", "LD"),
+                        ("C - LD-C", "C", "LD-C"),
+                    ]
+                    for div_lbl, b_c, p_c in actual_divisions:
+                        sub_view = df_comp_active_agents[
+                            (df_comp_active_agents["Bucket"] == b_c) & 
+                            (df_comp_active_agents["Project"] == p_c)
+                        ]
+                        if not sub_view.empty:
+                            render_composition_block(sub_view, f"Project: {p_c} &nbsp;|&nbsp; Bucket: {b_c} ({len(sub_view)} Agent Aktif)")
+
+        with st.expander("🔍 **Detail Perorangan Agent Aktif (Hiredate, Kategori & Interval Ranking)**", expanded=False):
+            cols_ag_detail = [
+                "Rank MTD", "Ranking Interval", "Project", "Bucket", "Nama TL",
+                "ID Agent", "Nama Pengguna", "Hiredate", "Kategori Agent",
+                "Total Penambahan Hari Ini_Total", "Total Penerimaan Hari Ini_Total", "Recovery Rate Num"
+            ]
+            df_d_view = df_comp_active_agents[cols_ag_detail].copy()
+            df_d_view = df_d_view.rename(columns={
+                "Rank MTD": "Rank",
+                "Total Penambahan Hari Ini_Total": "Total Penambahan (Monthly)",
+                "Total Penerimaan Hari Ini_Total": "Total Penerimaan (Monthly)",
+                "Recovery Rate Num": "Recovery Rate (%)"
+            })
+            df_d_view["Total Penambahan (Monthly)"] = df_d_view["Total Penambahan (Monthly)"].apply(lambda v: format_num(v, is_currency=True))
+            df_d_view["Total Penerimaan (Monthly)"] = df_d_view["Total Penerimaan (Monthly)"].apply(lambda v: format_num(v, is_currency=True))
+            df_d_view["Recovery Rate (%)"] = df_d_view["Recovery Rate (%)"].apply(lambda v: f"{v:.2f}%")
+            display_full_table(translate_columns(df_d_view))
+
+# =========================================================
+# MENU 6: SCHEDULE TRAINING TEAM LEADER (KHUSUS MPT05)
+# =========================================================
+with tab_training:
+    st.markdown("### 📅 **Schedule Training Team Leader ke Agent (Khusus MPT05)**")
+    st.caption("Jadwal dan topik pembahasan training internal MPT05. Dilengkapi proteksi password untuk edit/tambah jadwal.")
+
+    # 1. Load Data Jadwal Training Tersimpan
+    def load_training_data():
+        if os.path.exists(TRAINING_FILE):
+            try:
+                with open(TRAINING_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return []
+        return []
+
+    def save_training_data(data_list):
+        try:
+            with open(TRAINING_FILE, "w", encoding="utf-8") as f:
+                json.dump(data_list, f, indent=4, ensure_ascii=False)
+        except Exception:
+            pass
+
+    training_records = load_training_data()
+
+    # Daftar TL Khusus MPT05
+    mpt05_tls_list = [
+        "MPT05-TL-001 (S1 - SK)",
+        "MPT05-TL-002 (S1 - SK)",
+        "MPT05-TL-003 (S1 - SK)",
+        "MPT05-TL-004 (S1 - SK)",
+        "MPT05-D0-TL-001 (D0 - SK)",
+        "MPT05-D0-TL-002 (D0 - SK)",
+        "W-MPT05 (S1 - LD)",
+        "W-MPT05-2 (S1 - LD)",
+        "W-MPT05-3 (S1 - LD)",
+        "W-MPT05-S0-01 (S0 - LD)",
+        "W-MPT05-BA (S1 - LD-BA)",
+        "W-MPT05-C (C - LD-C)",
+    ]
+
+    TRAINING_ADMIN_PASSWORD = "mpt05training"
+
+    if "training_edit_unlocked" not in st.session_state:
+        st.session_state["training_edit_unlocked"] = False
+
+    with st.expander("🔒 **Form Input / Edit Jadwal Training (Perlu Password)**", expanded=False):
+        c_pwd, c_btn, _ = st.columns([2, 1.2, 3])
+        with c_pwd:
+            input_tr_pwd = st.text_input("Password TL / Admin:", type="password", key="input_tr_pwd")
+        with c_btn:
+            st.write("")
+            if not st.session_state["training_edit_unlocked"]:
+                if st.button("🔓 Buka Akses Edit", use_container_width=True, key="btn_unlock_tr"):
+                    if input_tr_pwd in [TRAINING_ADMIN_PASSWORD, "mpt05admin"]:
+                        st.session_state["training_edit_unlocked"] = True
+                        st.success("Akses edit jadwal terbuka!")
+                        st.rerun()
+                    else:
+                        st.error("Password salah!")
+            else:
+                if st.button("🔒 Kunci Akses", use_container_width=True, key="btn_lock_tr"):
+                    st.session_state["training_edit_unlocked"] = False
+                    st.rerun()
+
+        if st.session_state["training_edit_unlocked"]:
+            st.markdown("---")
+            st.markdown("##### ✏️ **Tambah / Update Jadwal Training:**")
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                sel_tl = st.selectbox("Pilih Team Leader:", mpt05_tls_list, key="sel_tr_tl")
+                in_jadwal = st.text_input("Jadwal Training (Hari & Jam):", placeholder="Contoh: Setiap Rabu, 09:00 - 10:30 WIB", key="in_tr_jadwal")
+            with col_f2:
+                in_link = st.text_input("Link Gmeet / Zoom Meeting:", placeholder="https://meet.google.com/xxx-xxxx-xxx", key="in_tr_link")
+                in_topik = st.text_area("Topic Pembahasan:", placeholder="Contoh: Teknik Negosiasi Nasabah Janji Bayar & Closing Penagihan", key="in_tr_topik", height=70)
+
+            col_sub1, col_sub2 = st.columns([1.5, 4])
+            with col_sub1:
+                if st.button("💾 Simpan Jadwal Training", use_container_width=True, key="btn_save_tr"):
+                    if not in_jadwal or not in_topik:
+                        st.warning("Mohon lengkapi Jadwal dan Topic Pembahasan!")
+                    else:
+                        # Cari apakah TL ini sudah ada di records, jika ada update, jika belum tambah
+                        tl_name_clean = sel_tl.split(" (")[0]
+                        existing_idx = next((i for i, r in enumerate(training_records) if r.get("Nama Team Leader") == tl_name_clean), -1)
+
+                        new_entry = {
+                            "Nama Team Leader": tl_name_clean,
+                            "Divisi": sel_tl.split(" (")[1].replace(")", "") if " (" in sel_tl else "-",
+                            "jadwal_training": in_jadwal,
+                            "topic_pembahasan": in_topik,
+                            "link_meeting": in_link if in_link else "-",
+                            "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M")
+                        }
+
+                        if existing_idx >= 0:
+                            training_records[existing_idx] = new_entry
+                        else:
+                            training_records.append(new_entry)
+
+                        save_training_data(training_records)
+                        st.success(f"Jadwal training untuk {tl_name_clean} berhasil disimpan!")
+                        st.rerun()
+
+    # Tampilkan Tabel Jadwal Training
+    if not training_records:
+        # Tampilkan template default kosong jika belum ada input
+        default_rows = []
+        for tl_str in mpt05_tls_list:
+            tl_n = tl_str.split(" (")[0]
+            div_n = tl_str.split(" (")[1].replace(")", "") if " (" in tl_str else "-"
+            default_rows.append({
+                "Nama Team Leader": tl_n,
+                "jadwal_training": "Belum Dijadwalkan",
+                "topic_pembahasan": "Belum Diisi oleh TL",
+                "link_meeting": "-",
+            })
+        df_tr_view = pd.DataFrame(default_rows)
+    else:
+        # Gabungkan dengan daftar lengkap TL MPT05 agar semua TL tetap tampil
+        records_map = {r.get("Nama Team Leader"): r for r in training_records}
+        final_tr_rows = []
+        for tl_str in mpt05_tls_list:
+            tl_n = tl_str.split(" (")[0]
+            if tl_n in records_map:
+                r_item = records_map[tl_n]
+                final_tr_rows.append({
+                    "Nama Team Leader": tl_n,
+                    "jadwal_training": r_item.get("jadwal_training", "-"),
+                    "topic_pembahasan": r_item.get("topic_pembahasan", "-"),
+                    "link_meeting": r_item.get("link_meeting", "-"),
+                })
+            else:
+                final_tr_rows.append({
+                    "Nama Team Leader": tl_n,
+                    "jadwal_training": "Belum Dijadwalkan",
+                    "topic_pembahasan": "Belum Diisi oleh TL",
+                    "link_meeting": "-",
+                })
+        df_tr_view = pd.DataFrame(final_tr_rows)
+
+    df_tr_view.insert(0, "No", range(1, len(df_tr_view) + 1))
+    display_full_table(translate_columns(df_tr_view))
+
+# =========================================================
+# MENU 7: PRODUCTIVITY AGENTS (MPT05 DAILY TARGET MONITOR)
 # =========================================================
 with tab_productivity:
     st.markdown("### 🎯 **Produktivitas Harian Agen MPT05 (Agent Daily Productivity)**")
@@ -1834,7 +2141,7 @@ with tab_productivity:
                     st.markdown("".join(html_tbl), unsafe_allow_html=True)
 
 # =========================================================
-# MENU 6: WARNING LETTER (KHUSUS >7 HARI KERJA)
+# MENU 8: WARNING LETTER (KHUSUS >7 HARI KERJA)
 # =========================================================
 with tab_wl:
     st.caption("Daftar Warning Letter untuk Agen dan Team Leader (警告信名单 — Khusus Agen > 7 Hari Kerja)")
@@ -1940,7 +2247,7 @@ if not df_agents_processed.empty:
     all_period_records[f"Bln {cur_m_str} (MTD)"] = df_agents_processed[df_agents_processed["Apakah Ikut Berkompetisi"] == "Ya"].copy()
 
 # =========================================================
-# MENU 7: TRACK RECORD PERFORMANCE AGENTS
+# MENU 9: TRACK RECORD PERFORMANCE AGENTS (RESIGN DI PALING BAWAH)
 # =========================================================
 with tab_track_agent:
     st.caption("Memantau rekam jejak historis agen MPT05 lintas bulan dari folder `rawdata/TrackRecordAgent/` + MTD Berjalan.")
@@ -1991,9 +2298,12 @@ with tab_track_agent:
             elif all(data["rates"][i] > data["rates"][i+1] for i in range(tot_m - 1)): trend_label = "Terus Menurun 📉"
             else: trend_label = "Fluktuatif 🔄"
 
+            is_resign_val = 1 if str(data["Status Kerja"]).strip().lower() == "resign" else 0
+
             row_item = {
                 "ID Agent": data["ID Agent"], "Nama Pengguna": data["Nama Pengguna"], "Status Kerja": data["Status Kerja"],
                 "Rata-rata Rate (All-Time)": f"{avg_rate:.2f}%", "Analisis Kinerja": trend_label,
+                "_is_resign": is_resign_val,
                 "_order_val": RANK_ORDER.get(trend_label, 9), "_avg_sort": avg_rate,
             }
             for p_col in p_columns: row_item[p_col] = data["history"].get(p_col, "-")
@@ -2002,13 +2312,17 @@ with tab_track_agent:
         df_hist_ag = pd.DataFrame(history_rows)
         if df_hist_ag.empty: st.info("Tidak ada data agen MPT05.")
         else:
-            df_hist_ag = df_hist_ag.sort_values(by=["_order_val", "_avg_sort"], ascending=[True, False]).reset_index(drop=True)
+            # PENGURUTAN: AKTIF DI ATAS (KONSISTEN TOP S/D DATA BARU), RESIGN DI PALING BAWAH
+            df_hist_ag = df_hist_ag.sort_values(
+                by=["_is_resign", "_order_val", "_avg_sort"],
+                ascending=[True, True, False]
+            ).reset_index(drop=True)
             df_hist_ag.insert(0, "Ranking (Avg)", [f"#{i+1}" for i in range(len(df_hist_ag))])
-            df_hist_ag.drop(columns=["_order_val", "_avg_sort"], inplace=True)
+            df_hist_ag.drop(columns=["_is_resign", "_order_val", "_avg_sort"], inplace=True)
             display_full_table(translate_columns(df_hist_ag))
 
 # =========================================================
-# MENU 8: TRACK RECORD PERFORMANCE TL
+# MENU 10: TRACK RECORD PERFORMANCE TL
 # =========================================================
 with tab_track_tl:
     st.caption("Memantau rekam jejak kinerja seluruh Team Leader MPT05 lintas bulan dari folder `rawdata/Bulanan/`.")
@@ -2081,7 +2395,7 @@ with tab_track_tl:
             display_full_table(translate_columns(df_hist_tl))
 
 # =========================================================
-# MENU 9: TRACK RECORD PERFORMANCE GABUNGAN (TIDAK DOBEL OKTOBER)
+# MENU 11: TRACK RECORD PERFORMANCE GABUNGAN (TIDAK DOBEL OKTOBER)
 # =========================================================
 with tab_track_comp:
     st.caption("Perbandingan Recovery Rate dan Ranking antar Perusahaan bersebelahan lintas bulan (Bulan Final + MTD Berjalan + Daily).")
