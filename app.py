@@ -306,10 +306,10 @@ def display_full_table(df_input, fit_content=False):
                     val_render = f'<span style="color: #475569; font-weight: 700;">{val_str}</span>'
             elif "GAP" in str(col_name).upper() and val_str.startswith("-") and val_str != "-":
                 val_render = f'<span style="background: #fee2e2; color: #b91c1c; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-family: monospace; border: 1px solid #fca5a5;">{val_str}</span>'
-            elif "TOP 30%" in val_str.upper():
-                val_render = '<span style="background: #dcfce7; color: #166534; padding: 2px 7px; border-radius: 4px; font-weight: 800;">Top 30%</span>'
-            elif "BOTTOM 30%" in val_str.upper():
-                val_render = '<span style="background: #fee2e2; color: #991b1b; padding: 2px 7px; border-radius: 4px; font-weight: 800;">Bottom 30%</span>'
+            elif "TOP 10%" in val_str.upper() or val_str.upper() == "TOP10%":
+                val_render = '<span style="background: #dcfce7; color: #166534; padding: 2px 7px; border-radius: 4px; font-weight: 800;">TOP 10%</span>'
+            elif "BOTTOM 20%" in val_str.upper() or val_str.upper() == "BOTTOM20%":
+                val_render = '<span style="background: #fee2e2; color: #991b1b; padding: 2px 7px; border-radius: 4px; font-weight: 800;">BOTTOM 20%</span>'
             elif "HTTP://" in val_str.upper() or "HTTPS://" in val_str.upper():
                 val_render = f'<a href="{val_str}" target="_blank" style="color: #2563eb; font-weight: 700; text-decoration: underline;">🔗 Buka Link</a>'
             else:
@@ -355,7 +355,26 @@ def map_status_kerja(st_raw):
         return "Aktif"
     return "Resign" if s != "" and s != "nan" else "-"
 
-# 3 Kategori Ranking Interval Sederhana Sesuai Permintaan
+# 1. Ranking Interval Asli untuk Menu Agent Performance (Top 10%, 10-20%, 20-30%, dst.)
+def get_ranking_interval(rank, total):
+    if total <= 0: return "-"
+    pct = rank / total
+    if pct <= 0.10:
+        return "TOP 10%"
+    elif pct <= 0.20:
+        return "10–20%"
+    elif pct <= 0.30:
+        return "20–30%"
+    elif pct <= 0.50:
+        return "30–50%"
+    elif pct <= 0.70:
+        return "50–70%"
+    elif pct <= 0.80:
+        return "70–80%"
+    else:
+        return "Bottom 20%"
+
+# 2. Ranking Interval Khusus Menu Komposisi Agent (3 Kelompok)
 def get_interval_3cat(rank, total):
     if total <= 0: return "-"
     pct = rank / total
@@ -918,7 +937,7 @@ def process_agent_performance_data(mtd_agent_files, daily_files):
             "Perusahaan": perush_master,
             "Apakah Ikut Berkompetisi": is_comp,
             "Total Penambahan Hari Ini_Total": tot_pen_agent,
-            "Total Penerimaan Hari Ini_Total": rec_mtd + rec_daily,
+            "Total Penerimaan Hari Ini_Total": tot_rec_agent,
             "Recovery Rate Num": rec_rate_num,
             "Total Penambahan Hari Ini_Daily": pen_daily,
             "Total Penerimaan Hari Ini_Daily": rec_daily,
@@ -934,10 +953,11 @@ def process_agent_performance_data(mtd_agent_files, daily_files):
 
     df_res_agents = pd.DataFrame(records)
 
-    # Hitung Ranking dan Ranking Interval Khusus Antar Agen Kompetisi di Divisi Masing-Masing
+    # Hitung Ranking dan Dua Versi Interval (Kompetisi & Agent Performance)
     if not df_res_agents.empty:
         rank_map = {}
         intv_map = {}
+        intv_3cat_map = {}
 
         df_comp_only = df_res_agents[df_res_agents["Apakah Ikut Berkompetisi"] == "Ya"].copy()
         for (p, b), grp in df_comp_only.groupby(["Project", "Bucket"]):
@@ -946,12 +966,21 @@ def process_agent_performance_data(mtd_agent_files, daily_files):
             for idx_b, (_, r_b) in enumerate(grp_sorted.iterrows()):
                 rk = idx_b + 1
                 rank_map[(r_b["ID Agent"], r_b["Project"])] = f"#{rk}"
-                intv_map[(r_b["ID Agent"], r_b["Project"])] = get_interval_3cat(rk, tot_b)
+                # Interval Asli untuk Agent Performance
+                intv_map[(r_b["ID Agent"], r_b["Project"])] = get_ranking_interval(rk, tot_b)
+                # Interval 3 Kategori untuk Komposisi Agent
+                intv_3cat_map[(r_b["ID Agent"], r_b["Project"])] = get_interval_3cat(rk, tot_b)
 
         df_res_agents["Rank MTD"] = df_res_agents.apply(lambda r: rank_map.get((r["ID Agent"], r["Project"]), "-"), axis=1)
         df_res_agents["Ranking Interval"] = df_res_agents.apply(lambda r: intv_map.get((r["ID Agent"], r["Project"]), "-"), axis=1)
+        df_res_agents["Ranking Interval 3Cat"] = df_res_agents.apply(lambda r: intv_3cat_map.get((r["ID Agent"], r["Project"]), "-"), axis=1)
 
     return df_res_agents
+
+# ---------------------------------------------------------
+# PROSES DATA AGENT PERFORMA (DEKLARASI GLOBAL PENTING)
+# ---------------------------------------------------------
+df_agents_processed = process_agent_performance_data(mtd_agent_files, daily_files)
 
 # ---------------------------------------------------------
 # FUNGSI PEMBANTU (WARNING LETTER DI GLOBAL SCOPE)
@@ -1057,6 +1086,7 @@ def calculate_warning_letter_data(df_period_all, periode_name=""):
 
 # ---------------------------------------------------------
 # RENDER DUAL TABLES UNTUK MENU AGENT PERFORMANCE
+# (INTERVAL ASLI: Top 10%, 10-20%, 20-30%, 30-50%, 50-70%, 70-80%, Bottom 20%)
 # ---------------------------------------------------------
 def render_agent_split_tables(target_agents_df, title_text=None):
     if title_text:
@@ -1108,12 +1138,12 @@ def render_agent_split_tables(target_agents_df, title_text=None):
                 "Jumlah Pengiriman Template WABA": f"{r['Jumlah Pengiriman Template WABA_Daily']:.2f}",
             })
 
-    # Tabel Bulanan
+    # Tabel Bulanan (Interval 7 Kategori Asli)
     df_am = pd.DataFrame(rows_m)
     if not df_am.empty:
         df_am = df_am.sort_values(by="_rate_num", ascending=False).reset_index(drop=True)
         total_n = len(df_am)
-        gaps, gaps_amt, intervals = ["-"], ["-"], [get_interval_3cat(1, total_n)]
+        gaps, gaps_amt, intervals = ["-"], ["-"], [get_ranking_interval(1, total_n)]
         for i in range(1, total_n):
             diff = df_am.loc[i - 1, "_rate_num"] - df_am.loc[i, "_rate_num"]
             pen_c = df_am.loc[i, "_tot_pen"]
@@ -1123,7 +1153,7 @@ def render_agent_split_tables(target_agents_df, title_text=None):
             else:
                 gaps.append("0.00%")
                 gaps_amt.append("-")
-            intervals.append(get_interval_3cat(i + 1, total_n))
+            intervals.append(get_ranking_interval(i + 1, total_n))
 
         df_am["Gap"] = gaps
         df_am["Gap Amount"] = gaps_amt
@@ -1132,12 +1162,12 @@ def render_agent_split_tables(target_agents_df, title_text=None):
         cols_am = ["Rank", "Ranking Interval", "Project", "Bucket", "Nama TL", "ID Agent", "Nama Pengguna", "Status Kerja", "Hari Kerja", "Total Penambahan (Monthly)", "Total Penerimaan (Monthly)", "Recovery Rate (%)", "Gap", "Gap Amount"]
         df_am = df_am[cols_am]
 
-    # Tabel Harian
+    # Tabel Harian (Interval 7 Kategori Asli)
     df_ad = pd.DataFrame(rows_d)
     if not df_ad.empty:
         df_ad = df_ad.sort_values(by="_rate_num", ascending=False).reset_index(drop=True)
         total_nd = len(df_ad)
-        gaps_d, gaps_amt_d, intervals_d = ["-"], ["-"], [get_interval_3cat(1, total_nd)]
+        gaps_d, gaps_amt_d, intervals_d = ["-"], ["-"], [get_ranking_interval(1, total_nd)]
         for i in range(1, total_nd):
             diff_d = df_ad.loc[i - 1, "_rate_num"] - df_ad.loc[i, "_rate_num"]
             pen_dc = df_ad.loc[i, "_daily_pen"]
@@ -1147,7 +1177,7 @@ def render_agent_split_tables(target_agents_df, title_text=None):
             else:
                 gaps_d.append("0.00%")
                 gaps_amt_d.append("-")
-            intervals_d.append(get_interval_3cat(i + 1, total_nd))
+            intervals_d.append(get_ranking_interval(i + 1, total_nd))
 
         df_ad["Gap"] = gaps_d
         df_ad["Gap Amount"] = gaps_amt_d
@@ -1194,13 +1224,8 @@ def render_agent_bucket_tabs(df_agent_source):
                         if b_df.empty: continue
                         render_agent_split_tables(b_df, f"Project: {p} &nbsp;|&nbsp; Bucket: {b} ({len(b_df)} Total Agent)")
 
-# ---------------------------------------------------------
-# DATA PERFORMANCE AGENTS (MTD + DAILY)
-# ---------------------------------------------------------
-df_agents_processed = process_agent_performance_data(mtd_agent_files, daily_files)
-
 # =========================================================
-# TAB UTAMA: NAVIGASI MENU (LENGKAP DENGAN TRAINING & KOMPOSISI)
+# TAB UTAMA: NAVIGASI MENU (LENGKAP)
 # =========================================================
 tab_summary_weekly, tab_team_perf, tab_agent_senior, tab_agent_junior, tab_agent_comp, tab_training, tab_productivity, tab_wl, tab_track_agent, tab_track_tl, tab_track_comp = st.tabs([
     "Summary Weekly & Monthly",
@@ -1636,6 +1661,7 @@ with tab_team_perf:
 
 # =========================================================
 # MENU 3: PERFORMANCE AGENT (>7 HARI KERJA)
+# (Ranking Interval: TOP 10%, 10-20%, 20-30%, 30-50%, 50-70%, 70-80%, BOTTOM 20%)
 # =========================================================
 with tab_agent_senior:
     st.caption("Performance Agent (>7 Hari Kerja) — Akumulasi MTD + Daily, Berkompetisi Penuh (出勤天数 > 7天坐席排行榜)")
@@ -1650,6 +1676,7 @@ with tab_agent_senior:
 
 # =========================================================
 # MENU 4: PERFORMANCE AGENT (<=7 HARI KERJA)
+# (Ranking Interval: TOP 10%, 10-20%, 20-30%, 30-50%, 50-70%, 70-80%, BOTTOM 20%)
 # =========================================================
 with tab_agent_junior:
     st.caption("Performance Agent (<=7 Hari Kerja) — Masa Percobaan / Agen Baru (出勤天数 <= 7天坐席排行榜)")
@@ -1662,7 +1689,7 @@ with tab_agent_junior:
         render_agent_bucket_tabs(df_junior)
 
 # =========================================================
-# MENU 5: KOMPOSISI AGENT (1 TABEL UTUH TERKONSOLIDASI)
+# MENU 5: KOMPOSISI AGENT (1 ROW TERPADU: TOP 30%, MID, BOT 30%)
 # =========================================================
 with tab_agent_comp:
     st.markdown("### 👥 **Komposisi Agent per Team (Khusus Tim Berkompetisi & Agent Aktif)**")
@@ -1699,15 +1726,14 @@ with tab_agent_comp:
                 pct_lama = (tot_lama / tot_ag * 100.0) if tot_ag > 0 else 0.0
                 c_name = grp.iloc[0].get("Perusahaan", "")
 
-                # Sebaran 3 Interval untuk Agent Baru
-                baru_top30 = len(grp_baru[grp_baru["Ranking Interval"] == "Top 30%"])
-                baru_mid = len(grp_baru[grp_baru["Ranking Interval"] == "Middle 30-70%"])
-                baru_bot30 = len(grp_baru[grp_baru["Ranking Interval"] == "Bottom 30%"])
+                # Sebaran 3 Interval Khusus Komposisi (Ranking Interval 3Cat)
+                baru_top30 = len(grp_baru[grp_baru["Ranking Interval 3Cat"] == "Top 30%"])
+                baru_mid = len(grp_baru[grp_baru["Ranking Interval 3Cat"] == "Middle 30-70%"])
+                baru_bot30 = len(grp_baru[grp_baru["Ranking Interval 3Cat"] == "Bottom 30%"])
 
-                # Sebaran 3 Interval untuk Agent Lama
-                lama_top30 = len(grp_lama[grp_lama["Ranking Interval"] == "Top 30%"])
-                lama_mid = len(grp_lama[grp_lama["Ranking Interval"] == "Middle 30-70%"])
-                lama_bot30 = len(grp_lama[grp_lama["Ranking Interval"] == "Bottom 30%"])
+                lama_top30 = len(grp_lama[grp_lama["Ranking Interval 3Cat"] == "Top 30%"])
+                lama_mid = len(grp_lama[grp_lama["Ranking Interval 3Cat"] == "Middle 30-70%"])
+                lama_bot30 = len(grp_lama[grp_lama["Ranking Interval 3Cat"] == "Bottom 30%"])
 
                 rows_consolidated.append({
                     "Project": p_c,
