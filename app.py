@@ -1739,8 +1739,8 @@ with tab_team_perf:
 # MENU 3: DAILY PERFORMANCE (DARI FOLDER DailyRawdata_absen)
 # =========================================================
 with tab_daily_perf:
-    st.markdown("### ⚡ **Daily Performance (Data Sumber: Folder `DailyRawdata_absen`)**")
-    st.caption("Pilih file harian tanggal untuk memantau performa harian Team Leader dan evaluasi bonus harian agen MPT05. Hanya menampilkan tim yang ikut berkompetisi.")
+    #st.markdown("###  **Daily Performance**")
+    #st.caption("Pilih file harian tanggal untuk memantau performa harian Team Leader dan evaluasi bonus harian agen MPT05. Hanya menampilkan tim yang ikut berkompetisi.")
 
     if not daily_absen_files_dict:
         st.info("Folder `rawdata/DailyRawdata_absen/` belum memiliki berkas harian (misal `1.xlsx`, `2.xlsx`, dst.).")
