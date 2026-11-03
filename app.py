@@ -419,7 +419,7 @@ def calculate_agent_working_days(rawdata_folder, current_daily_files):
                 continue
 
             item_upper = item.upper()
-            if not (item.startswith(cur_month_num) or "OKT" in item_upper or "OCT" in item_upper):
+            if not (item.startswith(cur_month_num) or "OKT" in item_upper or "OCT" in item_upper or "NOV" in item_upper or "NOVEMBER" in item_upper):
                 continue
 
             if "SK" in item_upper:
