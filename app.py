@@ -410,67 +410,49 @@ def load_database_and_master(file_path):
 def calculate_agent_working_days(rawdata_folder, current_daily_files):
     agent_days_attended = {}
     absen_base_dir = os.path.join(rawdata_folder, "DailyRawdata_absen")
-    cur_month_num = str(datetime.now().month)
 
     if os.path.exists(absen_base_dir):
-        for item in os.listdir(absen_base_dir):
-            p = os.path.join(absen_base_dir, item)
-            if not os.path.isdir(p):
-                continue
+        subfolders = [d for d in os.listdir(absen_base_dir) if os.path.isdir(os.path.join(absen_base_dir, d))]
+        month_numbers = []
+        for sf in subfolders:
+            m = re.match(r"^(\d+)", sf)
+            if m:
+                month_numbers.append(int(m.group(1)))
+        
+        latest_month = max(month_numbers) if month_numbers else None
 
-            item_upper = item.upper()
-            if not (item.startswith(cur_month_num) or "OKT" in item_upper or "OCT" in item_upper or "NOV" in item_upper or "NOVEMBER" in item_upper):
-                continue
+        for item in subfolders:
+            # Hanya proses folder dengan bulan terbaru
+            if latest_month is not None and item.startswith(f"{latest_month}."):
+                p = os.path.join(absen_base_dir, item)
+                item_upper = item.upper()
 
-            if "SK" in item_upper:
-                proj_cat = "SK"
-            elif "LD" in item_upper:
-                proj_cat = "LD"
-            else:
-                continue
+                if "SK" in item_upper:
+                    proj_cat = "SK"
+                elif "LD" in item_upper:
+                    proj_cat = "LD"
+                else:
+                    continue
 
-            daily_excel_files = glob.glob(os.path.join(p, "*.xlsx")) + glob.glob(os.path.join(p, "*.xls"))
-            for d_file in daily_excel_files:
-                day_tag = os.path.splitext(os.path.basename(d_file))[0]
-                try:
-                    df_day = pd.read_excel(d_file)
-                    df_day.columns = [str(c).strip() for c in df_day.columns]
+                daily_excel_files = glob.glob(os.path.join(p, "*.xlsx")) + glob.glob(os.path.join(p, "*.xls"))
+                for d_file in daily_excel_files:
+                    day_tag = os.path.splitext(os.path.basename(d_file))[0]
+                    try:
+                        df_day = pd.read_excel(d_file)
+                        df_day.columns = [str(c).strip() for c in df_day.columns]
 
-                    for _, r in df_day.iterrows():
-                        id_raw = normalize_clean(r.get("Nama Pengguna", ""))
-                        nm_raw = normalize_clean(r.get("Nama", ""))
+                        for _, r in df_day.iterrows():
+                            id_raw = normalize_clean(r.get("Nama Pengguna", ""))
+                            nm_raw = normalize_clean(r.get("Nama", ""))
 
-                        if id_raw:
-                            k_id = (id_raw, proj_cat)
-                            agent_days_attended.setdefault(k_id, set()).add(f"{proj_cat}_{day_tag}")
-                        if nm_raw and nm_raw != id_raw:
-                            k_nm = (nm_raw, proj_cat)
-                            agent_days_attended.setdefault(k_nm, set()).add(f"{proj_cat}_{day_tag}")
-                except Exception:
-                    pass
-
-    for d_path in current_daily_files:
-        fname = os.path.basename(d_path).upper()
-        proj_cat = "SK" if "SK" in fname else "LD"
-
-        try:
-            df_curr = pd.read_excel(d_path)
-            df_curr.columns = [str(c).strip() for c in df_curr.columns]
-
-            for _, r in df_curr.iterrows():
-                pen_today = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
-                if pen_today > 0:
-                    id_raw = normalize_clean(r.get("Nama Pengguna", ""))
-                    nm_raw = normalize_clean(r.get("Nama", ""))
-
-                    if id_raw:
-                        k_id = (id_raw, proj_cat)
-                        agent_days_attended.setdefault(k_id, set()).add(f"{proj_cat}_today")
-                    if nm_raw and nm_raw != id_raw:
-                        k_nm = (nm_raw, proj_cat)
-                        agent_days_attended.setdefault(k_nm, set()).add(f"{proj_cat}_today")
-        except Exception:
-            pass
+                            if id_raw:
+                                k_id = (id_raw, proj_cat)
+                                agent_days_attended.setdefault(k_id, set()).add(f"{proj_cat}_{day_tag}")
+                            if nm_raw and nm_raw != id_raw:
+                                k_nm = (nm_raw, proj_cat)
+                                agent_days_attended.setdefault(k_nm, set()).add(f"{proj_cat}_{day_tag}")
+                    except Exception:
+                        pass
 
     working_days_map = {}
     for k, days_set in agent_days_attended.items():
@@ -514,18 +496,29 @@ def scan_dailyrawdata_absen(base_rawdata_dir):
     daily_date_dict = {}
 
     if os.path.exists(absen_base):
-        for item in os.listdir(absen_base):
-            p = os.path.join(absen_base, item)
-            if not os.path.isdir(p):
-                continue
+        subfolders = [d for d in os.path.join(absen_base, "") and os.listdir(absen_base) if os.path.isdir(os.path.join(absen_base, d))]
+        if not subfolders:
+            return daily_date_dict
 
-            excel_files = glob.glob(os.path.join(p, "*.xlsx")) + glob.glob(os.path.join(p, "*.xls"))
-            for f_path in excel_files:
-                fname_clean = os.path.splitext(os.path.basename(f_path))[0]
-                m_num = re.search(r"(\d+)", fname_clean)
-                day_key = int(m_num.group(1)) if m_num else fname_clean
+        # Cari nomor bulan tertinggi dari nama folder (misal "11. November-LD" -> 11)
+        month_numbers = []
+        for sf in subfolders:
+            m = re.match(r"^(\d+)", sf)
+            if m:
+                month_numbers.append(int(m.group(1)))
+        
+        latest_month = max(month_numbers) if month_numbers else None
 
-                daily_date_dict.setdefault(day_key, []).append(f_path)
+        # Hanya ambil folder yang berawalan nomor bulan terbaru tersebut
+        for item in subfolders:
+            if latest_month is not None and item.startswith(f"{latest_month}."):
+                p = os.path.join(absen_base, item)
+                excel_files = glob.glob(os.path.join(p, "*.xlsx")) + glob.glob(os.path.join(p, "*.xls"))
+                for f_path in excel_files:
+                    fname_clean = os.path.splitext(os.path.basename(f_path))[0]
+                    m_num = re.search(r"(\d+)", fname_clean)
+                    day_key = int(m_num.group(1)) if m_num else fname_clean
+                    daily_date_dict.setdefault(day_key, []).append(f_path)
 
     return daily_date_dict
 
@@ -2995,7 +2988,14 @@ with tab_wl:
                     for p_item in all_p:
                         ag_p = df_wl_ag[df_wl_ag["Project"] == p_item] if df_wl_ag is not None and not df_wl_ag.empty else pd.DataFrame()
                         tl_p = df_wl_tl[df_wl_tl["Project"] == p_item] if df_wl_tl is not None and not df_wl_tl.empty else pd.DataFrame()
-                        b_list = sorted(list(set(ag_p["Bucket"].tolist() + tl_p["Bucket"].tolist())))
+                        
+                        b_list_items = []
+                        if not ag_p.empty and "Bucket" in ag_p.columns:
+                            b_list_items.extend(ag_p["Bucket"].dropna().tolist())
+                        if not tl_p.empty and "Bucket" in tl_p.columns:
+                            b_list_items.extend(tl_p["Bucket"].dropna().tolist())
+                        b_list = sorted(list(set(b_list_items)))
+
                         for b_item in b_list:
                             render_wl_tables(ag_p[ag_p["Bucket"] == b_item] if not ag_p.empty else pd.DataFrame(), tl_p[tl_p["Bucket"] == b_item] if not tl_p.empty else pd.DataFrame(), f"Project: {p_item} | Bucket: {b_item}")
 
