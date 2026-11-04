@@ -40,7 +40,8 @@ st.markdown(
         margin-bottom: 0.8rem;
         border-bottom: 2px solid #e2e8f0;
         padding-bottom: 2px;
-        overflow-x: auto;
+        flex-wrap: wrap !important;
+        overflow-x: visible !important;
     }
     .stTabs [data-baseweb="tab"] {
         padding: 6px 12px;
@@ -1285,7 +1286,7 @@ def render_agent_bucket_tabs(df_agent_source):
 # =========================================================
 # TAB UTAMA: NAVIGASI MENU (TAB HORIZONTAL)
 # =========================================================
-tab_summary_weekly, tab_team_perf, tab_daily_perf, tab_agent_senior, tab_agent_junior, tab_agent_comp, tab_training, tab_productivity, tab_wl, tab_track_agent, tab_track_tl, tab_track_comp = st.tabs([
+tab_summary_weekly, tab_team_perf, tab_daily_perf, tab_agent_senior, tab_agent_junior, tab_agent_comp, tab_training, tab_productivity, tab_wl, tab_track_agent, tab_track_tl, tab_track_comp, tab_template = st.tabs([
     "Summary Weekly & Monthly",
     "Team Performance",
     "Daily Performance",
@@ -1298,6 +1299,7 @@ tab_summary_weekly, tab_team_perf, tab_daily_perf, tab_agent_senior, tab_agent_j
     "Track Record Performance Agents",
     "Track Record Performance TL",
     "Track Record Performance Gabungan",
+    "Template Penagihan",
 ])
 
 # =========================================================
@@ -3243,3 +3245,147 @@ with tab_track_comp:
                         if not tbl_comp.empty:
                             display_full_table(translate_columns(tbl_comp))
             st.write("")
+
+# ---------------------------------------------------------
+# MENU: TEMPLATE PENAGIHAN (DENGAN PROTEKSI PASSWORD & SUBMENU)
+# ---------------------------------------------------------
+with tab_template:
+    #st.markdown("### 📋 **Template Penagihan & Skrip Koleksi**")
+    #st.caption("Menu ini dilindungi password. Team Leader dapat menambahkan dan mengelola template pesan penagihan.")
+
+    TEMPLATE_FILE = os.path.join(BASE_DIR, "template_penagihan.json")
+    TEMPLATE_PASSWORD = "mpt05template" # Ubah password sesuai keinginan
+
+    if "template_unlocked" not in st.session_state:
+        st.session_state["template_unlocked"] = False
+
+    if not st.session_state["template_unlocked"]:
+        st.warning("🔒 Menu ini dilindungi. Masukkan password Team Leader / Admin untuk mengakses.")
+        c_p1, c_p2, _ = st.columns([2, 1, 3])
+        with c_p1:
+            input_pass = st.text_input("Password Menu Template:", type="password", key="input_tpl_pwd")
+        with c_p2:
+            st.write("")
+            if st.button("🔓 Masuk", use_container_width=True):
+                if input_pass == TEMPLATE_PASSWORD:
+                    st.session_state["template_unlocked"] = True
+                    st.success("Akses berhasil dibuka!")
+                    st.rerun()
+                else:
+                    st.error("Password salah!")
+    else:
+        if st.button("🔒 Kunci Kembali Menu", key="lock_tpl_btn"):
+            st.session_state["template_unlocked"] = False
+            st.rerun()
+
+        st.markdown("---")
+
+        def load_templates():
+            if os.path.exists(TEMPLATE_FILE):
+                try:
+                    with open(TEMPLATE_FILE, "r", encoding="utf-8") as f:
+                        return json.load(f)
+                except Exception:
+                    return []
+            return []
+
+        def save_templates(data_list):
+            try:
+                with open(TEMPLATE_FILE, "w", encoding="utf-8") as f:
+                    json.dump(data_list, f, indent=4, ensure_ascii=False)
+            except Exception:
+                pass
+
+        templates_data = load_templates()
+
+        # 2 Submenu: Template Normal & Template Lainnya
+        sub_tpl_1, sub_tpl_2, sub_tpl_input = st.tabs(["📌 Template Normal", "📂 Template Lainnya", "➕ Input / Tambah Template (TL)"])
+
+        with sub_tpl_input:
+            st.markdown("##### ✏️ **Form Input Template Penagihan oleh TL:**")
+            divisi_opts = ["S1 - SK", "D0 - SK", "S1 - LD", "S1 - LD-BA", "S0 - LD", "C - LD-C", "Semua Divisi"]
+            waktu_opts = ["Pagi", "Siang", "Sore", "Malam"]
+            kategori_opts = ["Normal", "Lainnya"]
+
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                in_divisi = st.selectbox("Divisi:", divisi_opts, key="tpl_div")
+                in_kategori = st.selectbox("Submenu Kategori:", kategori_opts, key="tpl_kat")
+            with col_f2:
+                in_waktu = st.selectbox("Ditagih di Waktu:", waktu_opts, key="tpl_waktu")
+                in_pembuat = st.text_input("Nama / ID Team Leader:", placeholder="Contoh: MPT05-TL-001", key="tpl_tl")
+
+            in_konten = st.text_area("Isi Kontent Template:", placeholder="Halo Bapak/Ibu [Nama], pengingat tagihan pinjaman Anda...", height=120, key="tpl_konten")
+
+            if st.button("💾 Simpan Template Baru", use_container_width=True):
+                if not in_konten or not in_pembuat:
+                    st.warning("Mohon lengkapi Nama TL dan Isi Kontent Template!")
+                else:
+                    new_tpl = {
+                        "divisi": in_divisi,
+                        "kategori": in_kategori,
+                        "waktu": in_waktu,
+                        "pembuat": in_pembuat,
+                        "kontent": in_konten,
+                        "tanggal": datetime.now().strftime("%Y-%m-%d %H:%M")
+                    }
+                    templates_data.append(new_tpl)
+                    save_templates(templates_data)
+                    st.success("Template berhasil disimpan!")
+                    st.rerun()
+
+        def render_template_list(target_kategori):
+            filtered = [t for t in templates_data if t.get("kategori") == target_kategori]
+            if not filtered:
+                st.info(f"Belum ada data untuk {target_kategori}.")
+                return
+
+            # Siapkan data untuk ditampilkan dalam bentuk tabel rapi
+            table_rows = []
+            for idx, item in enumerate(filtered):
+                table_rows.append({
+                    "No": f"#{idx+1}",
+                    "Divisi": item.get("divisi"),
+                    "Waktu Penagihan": item.get("waktu"),
+                    "Isi Konten": item.get("kontent"),
+                    "Dibuat Oleh": item.get("pembuat"),
+                    "_raw_index": templates_data.index(item) # Menyimpan indeks asli untuk hapus
+                })
+
+            df_tpl = pd.DataFrame(table_rows)
+
+            # Tampilkan menggunakan fungsi tabel eksekutif yang bersih
+            display_full_table(df_tpl.drop(columns=["_raw_index"]))
+
+            st.markdown("##### 🗑️ **Hapus Template:**")
+            col_del1, col_del2, col_del3 = st.columns([2, 1.5, 2])
+            with col_del1:
+                del_num = st.selectbox(
+                    "Pilih Nomor Template yang akan dihapus:", 
+                    options=[r["No"] for r in table_rows],
+                    key=f"sel_del_{target_kategori}"
+                )
+            with col_del2:
+                del_pwd_input = st.text_input("Password Hapus:", type="password", key=f"pwd_del_{target_kategori}")
+            with col_del3:
+                st.write("")
+                if st.button(f"🗑️ Hapus ({del_num})", key=f"btn_del_exec_{target_kategori}", use_container_width=True):
+                    if del_pwd_input == TEMPLATE_PASSWORD:
+                        # Cari item berdasarkan nomor urut pilihan
+                        target_row = next((r for r in table_rows if r["No"] == del_num), None)
+                        if target_row:
+                            original_idx = target_row["_raw_index"]
+                            removed_item = templates_data.pop(original_idx)
+                            save_templates(templates_data)
+                            st.success(f"Template {del_num} berhasil dihapus!")
+                            st.rerun()
+                    else:
+                        st.error("Password Hapus salah!")
+
+        with sub_tpl_1:
+            st.markdown("#### **Daftar Template Normal**")
+            render_template_list("Normal")
+
+        with sub_tpl_2:
+            st.markdown("#### **Daftar Template Lainnya**")
+            render_template_list("Lainnya")
