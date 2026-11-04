@@ -3303,6 +3303,8 @@ with tab_template:
 
         with sub_tpl_input:
             st.markdown("##### ✏️ **Form Input Template Penagihan oleh TL:**")
+            st.caption("Gunakan tombol 'Enter' untuk memberikan spasi dan jarak antar baris pada isi konten.")
+            
             divisi_opts = ["S1 - SK", "D0 - SK", "S1 - LD", "S1 - LD-BA", "S0 - LD", "C - LD-C", "Semua Divisi"]
             waktu_opts = ["Pagi", "Siang", "Sore", "Malam"]
             kategori_opts = ["Normal", "Lainnya"]
@@ -3315,7 +3317,12 @@ with tab_template:
                 in_waktu = st.selectbox("Ditagih di Waktu:", waktu_opts, key="tpl_waktu")
                 in_pembuat = st.text_input("Nama / ID Team Leader:", placeholder="Contoh: MPT05-TL-001", key="tpl_tl")
 
-            in_konten = st.text_area("Isi Kontent Template:", placeholder="Halo Bapak/Ibu [Nama], pengingat tagihan pinjaman Anda...", height=120, key="tpl_konten")
+            in_konten = st.text_area(
+                "Isi Kontent Template (Gunakan Spasi/Enter untuk mengatur jarak):", 
+                placeholder="Selamat pagi {Customer},\n\nDiharapkan pembayaran tagihan dapat diselesaikan hari ini.\n\nTerima kasih.", 
+                height=150, 
+                key="tpl_konten"
+            )
 
             if st.button("💾 Simpan Template Baru", use_container_width=True):
                 if not in_konten or not in_pembuat:
@@ -3337,27 +3344,30 @@ with tab_template:
         def render_template_list(target_kategori):
             filtered = [t for t in templates_data if t.get("kategori") == target_kategori]
             if not filtered:
-                st.info(f"Belum ada data untuk {target_kategori}.")
+                st.info(f"Belum ada data untuk kategori {target_kategori}.")
                 return
 
-            # Siapkan data untuk ditampilkan dalam bentuk tabel rapi
             table_rows = []
             for idx, item in enumerate(filtered):
+                # Memformat isi konten agar baris baru / spasi terbaca rapi di dalam tabel HTML
+                konten_formatted = item.get("kontent", "").replace("\n", "<br>")
+                
                 table_rows.append({
                     "No": f"#{idx+1}",
                     "Divisi": item.get("divisi"),
                     "Waktu Penagihan": item.get("waktu"),
-                    "Isi Konten": item.get("kontent"),
+                    "Isi Konten": f'<div style="text-align: left; padding: 6px; line-height: 1.5; white-space: normal;">{konten_formatted}</div>',
                     "Dibuat Oleh": item.get("pembuat"),
-                    "_raw_index": templates_data.index(item) # Menyimpan indeks asli untuk hapus
+                    "_raw_index": templates_data.index(item)
                 })
 
             df_tpl = pd.DataFrame(table_rows)
 
-            # Tampilkan menggunakan fungsi tabel eksekutif yang bersih
+            # Tampilkan tabel dengan desain korporat yang bersih
             display_full_table(df_tpl.drop(columns=["_raw_index"]))
 
-            st.markdown("##### 🗑️ **Hapus Template:**")
+            st.markdown("---")
+            st.markdown("##### 🗑️ **Hapus Template Terpilih:**")
             col_del1, col_del2, col_del3 = st.columns([2, 1.5, 2])
             with col_del1:
                 del_num = st.selectbox(
@@ -3371,11 +3381,10 @@ with tab_template:
                 st.write("")
                 if st.button(f"🗑️ Hapus ({del_num})", key=f"btn_del_exec_{target_kategori}", use_container_width=True):
                     if del_pwd_input == TEMPLATE_PASSWORD:
-                        # Cari item berdasarkan nomor urut pilihan
                         target_row = next((r for r in table_rows if r["No"] == del_num), None)
                         if target_row:
                             original_idx = target_row["_raw_index"]
-                            removed_item = templates_data.pop(original_idx)
+                            templates_data.pop(original_idx)
                             save_templates(templates_data)
                             st.success(f"Template {del_num} berhasil dihapus!")
                             st.rerun()
