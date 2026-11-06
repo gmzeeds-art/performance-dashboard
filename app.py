@@ -1773,7 +1773,7 @@ with tab_team_perf:
             st.write("")
 
 with tab_daily_perf:
-    st.markdown("### ⚡ **Daily Performance & MPT05 Incentive Management**")
+    st.markdown("### **Daily Performance & MPT05 Incentive Management**")
     st.caption("Pilih file harian tanggal untuk memantau performa harian Team Leader, evaluasi bonus harian agen MPT05, serta 3 sub-menu bonus khusus.")
 
     if not daily_absen_files_dict:
@@ -1866,7 +1866,7 @@ with tab_daily_perf:
 
             daily_sub_tabs = st.tabs([
                 "S1 - SK", "D0 - SK", "S1 - LD", "S1 - LD-BA", "S0 - LD", "C - LD-C", "Semua Bucket",
-                "🎁 Summary Bonus Agents", "🏆 Summary Bonus TL", "🌟 Weekly Bonus Agents (25-31)"
+                "Summary Bonus Agents", "Summary Bonus TL", "Weekly Bonus Agents"
             ])
 
             def render_daily_absen_view(df_subset_agents, p_code, b_code, title_box=None):
@@ -1874,7 +1874,7 @@ with tab_daily_perf:
                     st.markdown(f'<div class="clean-group-title">{title_box}</div>', unsafe_allow_html=True)
 
                 st.markdown(
-                    '<div class="section-banner-title">📊 Table 1: Summary Daily Performance Team (Tanggal 1 - Terakhir)</div>', 
+                    '<div class="section-banner-title">Table 1: Summary Daily Performance Team (Tanggal 1 - Terakhir)</div>', 
                     unsafe_allow_html=True
                 )
                 st.caption("🔴 *Angka dengan warna merah menandakan perolehan tim berada di bawah rata-rata divisi (below average) pada tanggal tersebut.*")
@@ -1954,7 +1954,7 @@ with tab_daily_perf:
                     st.info(f"Tidak ada agen kompetisi yang hadir pada tanggal ini ({selected_day_label}) untuk bucket ini.")
                     return
 
-                st.markdown(f'<div class="section-banner-title tl">⚡ Table 2: Daily Performance Team Leader ({selected_day_label})</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="section-banner-title tl">Table 2: Daily Performance Team Leader ({selected_day_label})</div>', unsafe_allow_html=True)
                 tl_summary_list = []
                 for tl_name, grp in df_subset_agents.groupby("Nama TL"):
                     pen_tl = grp["_daily_pen"].sum()
@@ -2088,7 +2088,7 @@ with tab_daily_perf:
             # SUB-TAB 8: SUMMARY BONUS AGENTS (Dengan Rincian Harian Transparan)
             # =========================================================
             with daily_sub_tabs[7]:
-                st.markdown("### 🎁 **Summary Bonus Agents (Akumulasi Tanggal 1 - Akhir Bulan)**")
+                st.markdown("### **Summary Bonus Agents (Akumulasi Tanggal 1 - Akhir Bulan)**")
                 st.caption("Total bonus akumulatif harian yang didapatkan agen MPT05 dari tanggal 1 sampai akhir bulan dengan rincian harian transparan.")
 
                 bonus_days = [d for d in sorted_day_keys if isinstance(d, int) and d >= 1]
@@ -2250,7 +2250,7 @@ with tab_daily_perf:
             # SUB-TAB 9: SUMMARY BONUS TEAM LEADER (Dengan Rincian Harian)
             # =========================================================
             with daily_sub_tabs[8]:
-                st.markdown("### 🏆 **Summary Bonus Team Leader (Akumulasi Tanggal 1 - Akhir Bulan)**")
+                st.markdown("### **Summary Bonus Team Leader (Akumulasi Tanggal 1 - Akhir Bulan)**")
                 st.caption(
                     "Skema: Monthly = akumulasi file tgl 1 s/d tanggal terpilih. "
                     "Divisi 2-3 tim: wajib Rank 1 monthly & Rank 1 harian. "
@@ -2305,7 +2305,7 @@ with tab_daily_perf:
             # SUB-TAB 10: WEEKLY BONUS AGENTS (Dipisahkan per Bucket)
             # =========================================================
             with daily_sub_tabs[9]:
-                st.markdown("### 🌟 **Weekly Bonus Agents (W1, W2, W3, W4)**")
+                st.markdown("### **Weekly Bonus Agents (W1, W2, W3, W4)**")
                 st.caption("Skema: 3 tim (Rank 1) atau 4-7 tim (Rank 1/2), agent Top 10%. Nominal: Rp 100.000 (Reg) | Rp 150.000 (BA). Dipisahkan per bucket.")
 
                 weekly_periods_map = {
@@ -2471,7 +2471,7 @@ with tab_daily_perf:
                         for w_tab, (lbl_tb, b_code_tb, p_code_tb) in zip(wk_sub_tabs, bucket_tabs_list):
                             with w_tab:
                                 # Tabel 1: Performa Team
-                                st.markdown(f'<div class="section-banner-title tl">🏆 Table 1: Team Performance ({sel_wk_label} - {lbl_tb})</div>', unsafe_allow_html=True)
+                                st.markdown(f'<div class="section-banner-title tl">Table 1: Team Performance ({sel_wk_label} - {lbl_tb})</div>', unsafe_allow_html=True)
                                 df_tp_bucket = df_team_perf_wk[(df_team_perf_wk["Bucket"] == b_code_tb) & (df_team_perf_wk["Project"] == p_code_tb)]
                                 if not df_tp_bucket.empty:
                                     df_tp_bucket = df_tp_bucket.sort_values(by="_rate_team", ascending=False).reset_index(drop=True)
