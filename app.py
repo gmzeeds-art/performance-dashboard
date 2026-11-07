@@ -4,6 +4,7 @@ import re
 import subprocess
 import io
 import json
+import hashlib
 from datetime import datetime
 import pandas as pd
 import streamlit as st
@@ -137,6 +138,47 @@ RAWDATA_DIR = os.path.join(BASE_DIR, "rawdata")
 MASTER_FILE = os.path.join(BASE_DIR, "data_karyawan.xlsx")
 TRAINING_FILE = os.path.join(BASE_DIR, "training_schedule.json")
 os.makedirs(RAWDATA_DIR, exist_ok=True)
+
+# =========================================================
+# PERFORMA: signature data + cache lintas rerun
+# Streamlit menjalankan ulang SELURUH script di setiap interaksi. Hasil hitung berat disimpan
+# di cache dan hanya dihitung ulang jika file di rawdata/ atau data_karyawan.xlsx berubah.
+# =========================================================
+def _mtime(path):
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
+
+def compute_data_signature(rawdata_dir, master_file):
+    h = hashlib.md5()
+    h.update(f"{master_file}:{_mtime(master_file)}".encode())
+    for root, dirs, files in os.walk(rawdata_dir):
+        dirs.sort()
+        for fn in sorted(files):
+            fp = os.path.join(root, fn)
+            try:
+                stt = os.stat(fp)
+                h.update(f"{fp}:{stt.st_mtime_ns}:{stt.st_size}".encode())
+            except OSError:
+                pass
+    return h.hexdigest()
+
+DATA_SIG = compute_data_signature(RAWDATA_DIR, MASTER_FILE)
+
+_HEAVY_FUNCS = {}
+
+@st.cache_data(ttl=None, show_spinner=False, max_entries=256)
+def _heavy_cached(fn_name, data_sig, args):
+    return _HEAVY_FUNCS[fn_name](*args)
+
+def heavy(fn):
+    """Cache hasil fungsi berat berdasarkan (argumen + DATA_SIG). Tanpa perubahan file -> tidak dihitung ulang."""
+    _HEAVY_FUNCS[fn.__name__] = fn
+    def wrapper(*args):
+        return _heavy_cached(fn.__name__, DATA_SIG, args)
+    wrapper.__name__ = fn.__name__
+    return wrapper
 
 TARGET_BUCKETS = [
     ("S1 - SK", "S1", "SK"),
@@ -378,8 +420,8 @@ def get_interval_3cat(rank, total):
     else:
         return "Bottom 30%"
 
-@st.cache_data(ttl=60, show_spinner=False)
-def load_database_and_master(file_path):
+@st.cache_data(ttl=None, show_spinner=False)
+def load_database_and_master(file_path, file_mtime=0.0):
     if not os.path.exists(file_path):
         return None, None
     try:
@@ -398,8 +440,8 @@ def load_database_and_master(file_path):
         st.error(f"Error membaca database: {e}")
         return None, None
 
-@st.cache_data(ttl=60, show_spinner=False)
-def calculate_agent_working_days(rawdata_folder, current_daily_files):
+@st.cache_data(ttl=None, show_spinner=False)
+def calculate_agent_working_days(rawdata_folder, current_daily_files, data_sig=""):
     agent_days_attended = {}
     absen_base_dir = os.path.join(rawdata_folder, "DailyRawdata_absen")
 
@@ -429,12 +471,14 @@ def calculate_agent_working_days(rawdata_folder, current_daily_files):
                 for d_file in daily_excel_files:
                     day_tag = os.path.splitext(os.path.basename(d_file))[0]
                     try:
-                        df_day = pd.read_excel(d_file)
-                        df_day.columns = [str(c).strip() for c in df_day.columns]
+                        df_day = _read_excel_raw(d_file, _mtime(d_file))
+                        n_rows = len(df_day)
+                        col_id = df_day["Nama Pengguna"].tolist() if "Nama Pengguna" in df_day.columns else [""] * n_rows
+                        col_nm = df_day["Nama"].tolist() if "Nama" in df_day.columns else [""] * n_rows
 
-                        for _, r in df_day.iterrows():
-                            id_raw = normalize_clean(r.get("Nama Pengguna", ""))
-                            nm_raw = normalize_clean(r.get("Nama", ""))
+                        for id_val, nm_val in zip(col_id, col_nm):
+                            id_raw = normalize_clean(id_val)
+                            nm_raw = normalize_clean(nm_val)
 
                             if id_raw:
                                 k_id = (id_raw, proj_cat)
@@ -458,11 +502,17 @@ def natural_sort_month_key(file_path):
         return (int(m.group(1)), fname)
     return (0, fname)
 
-@st.cache_data(ttl=60, show_spinner=False)
-def read_excel_standard(file_path):
+@st.cache_data(ttl=None, show_spinner=False, max_entries=512)
+def _read_excel_raw(file_path, file_mtime=0.0):
+    """Parse Excel mentah SEKALI per versi file (dipakai bersama oleh semua fungsi)."""
+    df = pd.read_excel(file_path)
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+@st.cache_data(ttl=None, show_spinner=False, max_entries=512)
+def _read_excel_standard_cached(file_path, file_mtime=0.0):
     try:
-        df = pd.read_excel(file_path)
-        df.columns = [str(c).strip() for c in df.columns]
+        df = _read_excel_raw(file_path, file_mtime).copy()
         fname = os.path.basename(file_path).upper()
         parent_name = os.path.basename(os.path.dirname(file_path)).upper()
 
@@ -481,6 +531,9 @@ def read_excel_standard(file_path):
         return df
     except Exception:
         return pd.DataFrame()
+
+def read_excel_standard(file_path):
+    return _read_excel_standard_cached(file_path, _mtime(file_path))
 
 def scan_dailyrawdata_absen(base_rawdata_dir):
     absen_base = os.path.join(base_rawdata_dir, "DailyRawdata_absen")
@@ -586,10 +639,10 @@ def scan_dashboard_folders(base_rawdata_dir):
 
     return weekly_dict, mtd_agent_files, daily_files, all_bulanan_files, wl_dict, track_agent_dict
 
-df_karyawan, df_master = load_database_and_master(MASTER_FILE)
+df_karyawan, df_master = load_database_and_master(MASTER_FILE, _mtime(MASTER_FILE))
 weekly_dict, mtd_agent_files, daily_files, all_bulanan_dict, wl_dict, track_agent_dict = scan_dashboard_folders(RAWDATA_DIR)
 daily_absen_files_dict = scan_dailyrawdata_absen(RAWDATA_DIR)
-agent_workdays_map = calculate_agent_working_days(RAWDATA_DIR, daily_files)
+agent_workdays_map = calculate_agent_working_days(RAWDATA_DIR, daily_files, DATA_SIG)
 
 col_h1, col_h2 = st.columns([3, 1])
 with col_h1:
@@ -646,37 +699,50 @@ if df_master is not None and not df_master.empty:
             "perusahaan_master": str(r.get("Perusahaan", "")).strip(),
         })
 
+# --- Index master sekali per rerun: lookup O(1), bukan iterrows() di setiap pemanggilan ---
+_master_index = {}
+if df_master is not None and not df_master.empty:
+    _n = len(df_master)
+    for _tl, _bk, _pj, _ps in zip(
+        df_master.get("Nama TL", pd.Series([""] * _n)),
+        df_master.get("Bucket", pd.Series([""] * _n)),
+        df_master.get("Project", pd.Series([""] * _n)),
+        df_master.get("Perusahaan", pd.Series([""] * _n)),
+    ):
+        _master_index.setdefault((normalize_clean(_tl), normalize_clean(_bk)), []).append(
+            (normalize_clean(_pj), str(_ps).strip())
+        )
+_master_status_memo = {}
+
 def get_master_status(tl, bucket, project):
+    memo_key = (tl, bucket, project)
+    hit = _master_status_memo.get(memo_key)
+    if hit is not None:
+        return hit
+
     t_clean = normalize_clean(tl)
     b_clean = normalize_clean(bucket)
     p_clean = normalize_clean(project)
 
-    # Blacklist eksplisit untuk tim non-kompetisi
+    result = ("Tidak", "Non-Kompetisi")
     if "EXTERNAL COLLECTION" in t_clean or t_clean in ["INTERNAL COLLECTION-2", "W-MPT02-AVG"]:
-        return "Tidak", "Non-Kompetisi"
+        pass
+    elif _master_index:
+        for m_proj, m_perush in _master_index.get((t_clean, b_clean), ()):
+            if p_clean == m_proj or p_clean in m_proj or m_proj in p_clean:
+                result = ("Ya", m_perush)
+                break
 
-    if df_master is None or df_master.empty:
-        return "Tidak", "Non-Kompetisi"
+    _master_status_memo[memo_key] = result
+    return result
 
-    for _, r in df_master.iterrows():
-        m_tl = normalize_clean(r.get('Nama TL', ''))
-        m_buck = normalize_clean(r.get('Bucket', ''))
-        m_proj = normalize_clean(r.get('Project', ''))
-        m_perush = str(r.get('Perusahaan', '')).strip()
-
-        # Pencocokan persis pada Nama TL, Bucket, dan Project yang sesuai
-        if t_clean == m_tl and b_clean == m_buck and (p_clean == m_proj or p_clean in m_proj or m_proj in p_clean):
-            return "Ya", m_perush
-
-    return "Tidak", "Non-Kompetisi"
-
-daily_comp_map = {}
-daily_tl_map = {}
-
-if daily_files:
+@heavy
+def compute_daily_comp_maps(daily_files):
+    daily_comp_map = {}
+    daily_tl_map = {}
     for df_path in daily_files:
         try:
-            df_d = pd.read_excel(df_path)
+            df_d = _read_excel_raw(df_path, _mtime(df_path))
             df_d.columns = [str(c).strip() for c in df_d.columns]
             fname = os.path.basename(df_path).upper()
             proj_hint = "SK" if "SK" in fname else "LD"
@@ -724,18 +790,25 @@ if daily_files:
                     pen_d = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
                     rec_d = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
 
-                    k_comp = (proj_val, buck_val, perush)
+                    # KUNCI memakai project file (SK/LD) agar cocok dengan data Monthly/Weekly yang hanya
+                    # mengenal Project "SK"/"LD" (tim BA & bucket C dihitung di "LD").
+                    k_comp = (p_cat, buck_val, perush)
                     daily_comp_map.setdefault(k_comp, {"pen": 0.0, "rec": 0.0})
                     daily_comp_map[k_comp]["pen"] += pen_d
                     daily_comp_map[k_comp]["rec"] += rec_d
 
-                    k_tl = (proj_val, buck_val, tl_val)
+                    k_tl = (p_cat, buck_val, tl_val)  # dicari dengan NAMA TL oleh tabel Performa Harian
                     daily_tl_map.setdefault(k_tl, {"pen": 0.0, "rec": 0.0})
                     daily_tl_map[k_tl]["pen"] += pen_d
                     daily_tl_map[k_tl]["rec"] += rec_d
         except Exception:
             pass
+    return daily_comp_map, daily_tl_map
 
+daily_comp_map, daily_tl_map = compute_daily_comp_maps(daily_files)
+
+
+@heavy
 def process_department_weekly_data(file_list):
     records = []
     for f in file_list:
@@ -771,6 +844,7 @@ def process_department_weekly_data(file_list):
             pass
     return pd.DataFrame(records)
 
+@heavy
 def process_agent_performance_data(mtd_agent_files, daily_files):
     if not mtd_agent_files and not daily_files:
         return pd.DataFrame()
@@ -959,7 +1033,7 @@ def process_agent_performance_data(mtd_agent_files, daily_files):
 
 df_agents_processed = process_agent_performance_data(mtd_agent_files, daily_files)
 
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=None, show_spinner=False)
 def get_daily_historical_tl_performance(absen_dict_keys_str):
     daily_history_matrix = {}
     daily_history_tls = {}
@@ -1003,6 +1077,113 @@ def get_daily_historical_tl_performance(absen_dict_keys_str):
                 pass
 
     return daily_history_matrix, daily_history_tls, sorted_day_keys
+
+# =========================================================
+# BONUS HARIAN TEAM LEADER (Summary Bonus TL)
+# Skema insentif:
+#  - Divisi 2-3 tim : wajib Rank 1 monthly DAN Rank 1 daily
+#  - Divisi > 3 tim : wajib Rank 1/2 monthly DAN Rank 1/2 daily
+#  - Divisi < 2 tim : tidak ada kompetisi -> tidak ada bonus
+# Monthly = akumulasi file tanggal 1 s/d tanggal berjalan (upto_day).
+# =========================================================
+TL_BONUS_REGULER = {1: 40000, 2: 30000}
+TL_BONUS_BA = {1: 50000, 2: 40000}
+
+def calculate_tl_daily_bonus(history_matrix, history_tls, upto_day):
+    """history_matrix: {(project, bucket, tl): {day: {"pen": x, "rec": y}}}
+    Mengembalikan (list_ringkasan_bonus, dict_log_harian_per_TL)."""
+    days = sorted({d for per_day in history_matrix.values() for d in per_day
+                   if isinstance(d, int) and 1 <= d <= upto_day})
+
+    cum = {}
+    acc = {}
+    logs = {}
+    last_status = {}
+
+    for d in days:
+        # 1) Akumulasi monthly: file tgl 1 s/d d
+        for k, per_day in history_matrix.items():
+            v = per_day.get(d)
+            if v:
+                c = cum.setdefault(k, {"pen": 0.0, "rec": 0.0})
+                c["pen"] += v["pen"]
+                c["rec"] += v["rec"]
+
+        # 2) Rank monthly per divisi (Project, Bucket)
+        by_div_m = {}
+        for k, c in cum.items():
+            if c["pen"] > 0:
+                by_div_m.setdefault((k[0], k[1]), []).append((k, c["rec"] / c["pen"] * 100.0))
+        monthly_rank, div_size = {}, {}
+        for div, lst in by_div_m.items():
+            lst.sort(key=lambda x: (-x[1], str(x[0][2])))
+            div_size[div] = len(lst)
+            for i, (k, _) in enumerate(lst, 1):
+                monthly_rank[k] = i
+
+        # 3) Rank daily per divisi pada tanggal d
+        by_div_d = {}
+        for k, per_day in history_matrix.items():
+            v = per_day.get(d)
+            if v and v["pen"] > 0:
+                by_div_d.setdefault((k[0], k[1]), []).append((k, v["rec"] / v["pen"] * 100.0))
+
+        for div, lst in by_div_d.items():
+            lst.sort(key=lambda x: (-x[1], str(x[0][2])))
+            n_div = div_size.get(div, len(lst))          # total tim di divisi (basis monthly)
+            max_rank = 1 if n_div <= 3 else 2            # batas rank yang lolos
+            is_ba = "LD-BA" in str(div[0]).upper() or "LD-BA" in str(div[1]).upper()
+            table = TL_BONUS_BA if is_ba else TL_BONUS_REGULER
+
+            for rk_d, (k, rate) in enumerate(lst, 1):
+                rk_m = monthly_rank.get(k)
+                competing = n_div >= 2
+                m_ok = competing and rk_m is not None and rk_m <= max_rank
+                d_ok = competing and rk_d <= max_rank
+                amt = table.get(rk_d, 0) if (m_ok and d_ok) else 0
+
+                if m_ok:
+                    st_m = "Lolos Rank #1" if max_rank == 1 else "Lolos Rank 1/2"
+                else:
+                    st_m = "Tidak Lolos Monthly"
+
+                logs.setdefault(k, []).append({
+                    "Tanggal": f"Tgl {d}",
+                    "Project": k[0],
+                    "Bucket": k[1],
+                    "Recovery Rate (Hari Ini)": f"{rate:.2f}%",
+                    "Rank Harian": f"#{rk_d} dari {len(lst)} Tim",
+                    "Rank Monthly (Kumulatif)": f"#{rk_m} dari {n_div} Tim" if rk_m else "-",
+                    "Status Monthly": st_m,
+                    "Bonus TL Harian": f"Rp {amt:,}".replace(",", ".") if amt > 0 else "Rp 0",
+                })
+                last_status[k] = st_m
+
+                if amt > 0:
+                    a = acc.setdefault(k, {
+                        "Nama TL": k[2], "Project": k[0], "Bucket": k[1],
+                        "Perusahaan": history_tls.get(k, {}).get("perush", "-"),
+                        "Hari Rank 1": 0, "Hari Rank 2": 0, "Total Bonus TL (Rp)": 0,
+                    })
+                    if rk_d == 1: a["Hari Rank 1"] += 1
+                    elif rk_d == 2: a["Hari Rank 2"] += 1
+                    a["Total Bonus TL (Rp)"] += amt
+
+    rows = []
+    for k, a in acc.items():
+        rows.append({**a, "Status Monthly (Dinamis)": last_status.get(k, "-"), "_key": k})
+
+    # Label log unik (jika nama TL sama muncul di >1 divisi, tambahkan project-bucket)
+    name_count = {}
+    for k in logs: name_count[k[2]] = name_count.get(k[2], 0) + 1
+    logs_by_label = {}
+    for k, lst in logs.items():
+        label = k[2] if name_count[k[2]] == 1 else f"{k[2]} ({k[0]} - {k[1]})"
+        logs_by_label[label] = lst
+    for r in rows:
+        k = r.pop("_key")
+        r["_log_label"] = k[2] if name_count[k[2]] == 1 else f"{k[2]} ({k[0]} - {k[1]})"
+    return rows, logs_by_label
 
 def get_eligible_top_teams_with_rules(df_tl_daily_view):
     if df_tl_daily_view.empty:
@@ -1246,6 +1427,298 @@ def render_agent_bucket_tabs(df_agent_source):
                         b_df = p_df[p_df["Bucket"] == b]
                         if b_df.empty: continue
                         render_agent_split_tables(b_df, f"Project: {p} &nbsp;|&nbsp; Bucket: {b} ({len(b_df)} Total Agent)")
+
+
+@heavy
+def compute_agent_bonus_summary(bonus_days):
+    """Akumulasi bonus agen per hari (di-cache lintas rerun)."""
+    agent_bonus_accumulator = {}
+
+    for d_key in bonus_days:
+        files_d = daily_absen_files_dict.get(d_key, [])
+        df_d_list = [read_excel_standard(fp) for fp in files_d if not read_excel_standard(fp).empty]
+        if not df_d_list: continue
+        df_d_day = pd.concat(df_d_list, ignore_index=True)
+
+        day_tl_perf = {}
+        for _, r in df_d_day.iterrows():
+            id_raw = normalize_clean(r.get("Nama Pengguna", ""))
+            nm_raw = normalize_clean(r.get("Nama", ""))
+            proj_src = r.get("_source_project", "")
+            p_cat = "SK" if "SK" in proj_src else "LD"
+            acc_k = id_raw if id_raw else nm_raw
+            if not acc_k: continue
+            k_info = karyawan_dict.get((acc_k, p_cat)) or karyawan_dict.get((nm_raw, p_cat)) or {}
+            tl_v = k_info.get("Nama TL", "Unknown")
+            b_v = k_info.get("Bucket", "Unknown")
+            p_v = k_info.get("Project", proj_src)
+            is_c, _ = get_master_status(tl_v, b_v, p_v)
+            if is_c != "Ya": continue
+            pen_v = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
+            rec_v = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
+            if pen_v > 0:
+                k_t_key = (p_v, b_v, tl_v)
+                day_tl_perf.setdefault(k_t_key, {"pen": 0.0, "rec": 0.0})
+                day_tl_perf[k_t_key]["pen"] += pen_v
+                day_tl_perf[k_t_key]["rec"] += rec_v
+
+        eligible_tls_today_by_div = {}
+        tls_by_div_dict = {}
+        for (p_d, b_d, tl_d), vals in day_tl_perf.items():
+            rate_t = (vals["rec"] / vals["pen"] * 100.0) if vals["pen"] > 0 else 0.0
+            tls_by_div_dict.setdefault((p_d, b_d), []).append((tl_d, rate_t))
+
+        for (p_d, b_d), lst in tls_by_div_dict.items():
+            lst_sorted = sorted(lst, key=lambda x: x[1], reverse=True)
+            tot_teams_div = len(lst_sorted)
+            if tot_teams_div >= 3:
+                eligible_tls_today_by_div[(p_d, b_d)] = set([item[0] for item in lst_sorted[:2]])
+            elif tot_teams_div in [1, 2]:
+                eligible_tls_today_by_div[(p_d, b_d)] = set([item[0] for item in lst_sorted[:1]])
+            else:
+                eligible_tls_today_by_div[(p_d, b_d)] = set()
+
+        div_agents_day = {}
+        for _, r in df_d_day.iterrows():
+            id_raw = normalize_clean(r.get("Nama Pengguna", ""))
+            nm_raw = normalize_clean(r.get("Nama", ""))
+            proj_src = r.get("_source_project", "")
+            p_cat = "SK" if "SK" in proj_src else "LD"
+            acc_k = id_raw if id_raw else nm_raw
+            if not acc_k: continue
+            k_info = karyawan_dict.get((acc_k, p_cat)) or karyawan_dict.get((nm_raw, p_cat)) or {}
+            tl_v = k_info.get("Nama TL", "Unknown")
+            b_v = k_info.get("Bucket", "Unknown")
+            p_v = k_info.get("Project", proj_src)
+            is_c, perush_m = get_master_status(tl_v, b_v, p_v)
+            if is_c != "Ya": continue
+            pen_v = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
+            rec_v = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
+            if pen_v > 0:
+                r_num = (rec_v / pen_v * 100.0)
+                div_agents_day.setdefault((p_v, b_v), []).append({
+                    "id_agent": k_info.get("ID_Akun_Resmi", id_raw),
+                    "nama": k_info.get("Nama_Orang_Resmi", nm_raw),
+                    "tl": tl_v,
+                    "perusahaan": perush_m,
+                    "pen": pen_v,
+                    "rec": rec_v,
+                    "rate": r_num
+                })
+
+        for (p_d, b_d), ag_list in div_agents_day.items():
+            ag_list_sorted = sorted(ag_list, key=lambda x: x["rate"], reverse=True)
+            tot_ag_div = len(ag_list_sorted)
+            is_ba_div = (p_d == "LD-BA" or b_d == "LD-BA" or "LD-BA" in str(p_d).upper())
+            eligible_set_div = eligible_tls_today_by_div.get((p_d, b_d), set())
+
+            for idx_ag, ag_item in enumerate(ag_list_sorted):
+                rk_ag = idx_ag + 1
+                pct_ag = rk_ag / tot_ag_div if tot_ag_div > 0 else 1.0
+
+                is_mpt05 = ("MPT05" in ag_item["tl"].upper()) or ("MPT05" in ag_item["perusahaan"].upper()) or ("MPT05" in ag_item["id_agent"].upper())
+                is_t_top = (ag_item["tl"] in eligible_set_div)
+
+                bonus_amt = 0
+                if is_mpt05 and is_t_top:
+                    if pct_ag <= 0.10:
+                        bonus_amt = 50000 if is_ba_div else 40000
+                    elif pct_ag <= 0.20:
+                        bonus_amt = 40000 if is_ba_div else 30000
+
+                if bonus_amt > 0:
+                    ag_key = ag_item["id_agent"]
+                    if ag_key not in agent_bonus_accumulator:
+                        agent_bonus_accumulator[ag_key] = {
+                            "ID Agent": ag_key,
+                            "Nama Agent": ag_item["nama"],
+                            "Nama TL": ag_item["tl"],
+                            "Project": p_d,
+                            "Bucket": b_d,
+                            "Hari Eligible": 0,
+                            "Total Bonus (Rp)": 0,
+                        }
+                    agent_bonus_accumulator[ag_key]["Hari Eligible"] += 1
+                    agent_bonus_accumulator[ag_key]["Total Bonus (Rp)"] += bonus_amt
+    return agent_bonus_accumulator
+
+
+@heavy
+def compute_weekly_bonus_raw(weekly_days_valid):
+    """Agregasi weekly bonus (di-cache lintas rerun)."""
+    weekly_agent_accum = {}
+
+    for d_key in weekly_days_valid:
+        files_d = daily_absen_files_dict.get(d_key, [])
+        df_d_list = [read_excel_standard(fp) for fp in files_d if not read_excel_standard(fp).empty]
+        if not df_d_list: continue
+        df_d_wk = pd.concat(df_d_list, ignore_index=True)
+
+        for _, r in df_d_wk.iterrows():
+            id_raw = normalize_clean(r.get("Nama Pengguna", ""))
+            nm_raw = normalize_clean(r.get("Nama", ""))
+            proj_src = r.get("_source_project", "")
+            p_cat = "SK" if "SK" in proj_src else "LD"
+            acc_k = id_raw if id_raw else nm_raw
+            if not acc_k: continue
+            k_info = karyawan_dict.get((acc_k, p_cat)) or karyawan_dict.get((nm_raw, p_cat)) or {}
+            tl_v = k_info.get("Nama TL", "Unknown")
+            b_v = k_info.get("Bucket", "Unknown")
+            p_v = k_info.get("Project", proj_src)
+            is_c, perush_m = get_master_status(tl_v, b_v, p_v)
+            if is_c != "Ya": continue
+
+            pen_v = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
+            rec_v = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
+            if pen_v > 0:
+                ag_key = (k_info.get("ID_Akun_Resmi", id_raw), p_v, b_v)
+                if ag_key not in weekly_agent_accum:
+                    weekly_agent_accum[ag_key] = {
+                        "ID Agent": k_info.get("ID_Akun_Resmi", id_raw),
+                        "Nama Agent": k_info.get("Nama_Orang_Resmi", nm_raw),
+                        "Nama TL": tl_v,
+                        "Project": p_v,
+                        "Bucket": b_v,
+                        "Perusahaan": perush_m,
+                        "pen": 0.0,
+                        "rec": 0.0,
+                    }
+                weekly_agent_accum[ag_key]["pen"] += pen_v
+                weekly_agent_accum[ag_key]["rec"] += rec_v
+
+    wk_tl_accum = {}
+    for ag_k, meta in weekly_agent_accum.items():
+        t_key = (meta["Project"], meta["Bucket"], meta["Nama TL"])
+        wk_tl_accum.setdefault(t_key, {"pen": 0.0, "rec": 0.0})
+        wk_tl_accum[t_key]["pen"] += meta["pen"]
+        wk_tl_accum[t_key]["rec"] += meta["rec"]
+
+    wk_eligible_tls = set()
+    wk_tls_by_div = {}
+    for (p_d, b_d, tl_d), vals in wk_tl_accum.items():
+        rate_t = (vals["rec"] / vals["pen"] * 100.0) if vals["pen"] > 0 else 0.0
+        wk_tls_by_div.setdefault((p_d, b_d), []).append((tl_d, rate_t))
+
+    for (p_d, b_d), lst in wk_tls_by_div.items():
+        lst_sorted = sorted(lst, key=lambda x: x[1], reverse=True)
+        tot_teams_div = len(lst_sorted)
+        if tot_teams_div == 3:
+            for t_n, _ in lst_sorted[:2]:
+                wk_eligible_tls.add((p_d, b_d, t_n))
+        elif 4 <= tot_teams_div <= 7:
+            for t_n, _ in lst_sorted[:2]:
+                wk_eligible_tls.add((p_d, b_d, t_n))
+        elif tot_teams_div in [1, 2]:
+            for t_n, _ in lst_sorted[:1]:
+                wk_eligible_tls.add((p_d, b_d, t_n))
+
+    wk_ag_list = []
+    for ag_k, meta in weekly_agent_accum.items():
+        rate_a = (meta["rec"] / meta["pen"] * 100.0) if meta["pen"] > 0 else 0.0
+        wk_ag_list.append({**meta, "rate": rate_a})
+
+    div_wk_agents = {}
+    for ag_item in wk_ag_list:
+        div_wk_agents.setdefault((ag_item["Project"], ag_item["Bucket"]), []).append(ag_item)
+
+    eligible_weekly_rows = []
+    for (p_d, b_d), ags in div_wk_agents.items():
+        ags_sorted = sorted(ags, key=lambda x: x["rate"], reverse=True)
+        tot_div_ag = len(ags_sorted)
+        is_ba_div = (p_d == "LD-BA" or b_d == "LD-BA" or "LD-BA" in str(p_d).upper())
+
+        for idx_a, ag_item in enumerate(ags_sorted):
+            rk_a = idx_a + 1
+            pct_a = rk_a / tot_div_ag if tot_div_ag > 0 else 1.0
+
+            is_mpt05 = ("MPT05" in ag_item["Nama TL"].upper()) or ("MPT05" in ag_item["Perusahaan"].upper()) or ("MPT05" in ag_item["ID Agent"].upper())
+            is_team_eligible = ((ag_item["Project"], ag_item["Bucket"], ag_item["Nama TL"]) in wk_eligible_tls)
+            is_top10 = (pct_a <= 0.10)
+
+            status_w = "Ineligible"
+            if is_mpt05 and is_team_eligible and is_top10:
+                bonus_w_amt = 150000 if is_ba_div else 100000
+                status_w = f"Eligible (Rp {bonus_w_amt:,})".replace(",", ".")
+
+            eligible_weekly_rows.append({
+                "ID Agent": ag_item["ID Agent"],
+                "Nama Agent": ag_item["Nama Agent"],
+                "Nama TL": ag_item["Nama TL"],
+                "Project": ag_item["Project"],
+                "Bucket": ag_item["Bucket"],
+                "Recovery Rate (Periode)": f"{ag_item['rate']:.2f}%",
+                "Weekly Status": status_w,
+            })
+    return weekly_agent_accum, eligible_weekly_rows
+
+
+@heavy
+def build_daily_master_agents(selected_day_key):
+    """Baris agen untuk satu tanggal (di-cache lintas rerun). None bila file tidak terbaca."""
+    daily_dfs_loaded = []
+    for f_path in daily_absen_files_dict.get(selected_day_key, []):
+        df_f = read_excel_standard(f_path)
+        if not df_f.empty:
+            daily_dfs_loaded.append(df_f)
+    if not daily_dfs_loaded:
+        return None
+    df_daily_file_all = pd.concat(daily_dfs_loaded, ignore_index=True)
+
+    agent_daily_rows = []
+    for _, r in df_daily_file_all.iterrows():
+        id_raw = str(r.get("Nama Pengguna", "")).strip()
+        nm_raw = str(r.get("Nama", "")).strip()
+        proj_src = r.get("_source_project", "")
+        p_cat = "SK" if "SK" in proj_src else "LD"
+
+        id_clean = normalize_clean(id_raw)
+        nm_clean = normalize_clean(nm_raw)
+        acc_k = id_clean if id_clean else nm_clean
+        if not acc_k: continue
+
+        k_info = karyawan_dict.get((acc_k, p_cat)) or karyawan_dict.get((nm_clean, p_cat)) or karyawan_dict.get((acc_k, proj_src)) or {}
+        tl_val = k_info.get("Nama TL", "Unknown")
+        buck_val = k_info.get("Bucket", "Unknown")
+        proj_val = k_info.get("Project", proj_src)
+        st_kerja = k_info.get("Status Kerja", "Aktif")
+
+        is_comp, perush_master = get_master_status(tl_val, buck_val, proj_val)
+        if is_comp != "Ya":
+            continue
+
+        pen_hari_ini = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
+        rec_hari_ini = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
+
+        if pen_hari_ini > 0:
+            rate_d = (rec_hari_ini / pen_hari_ini * 100.0)
+
+            proj_bucket_cat = "SK" if proj_cat == "SK" or "SK" in str(proj_val).upper() else "LD"
+            w_days = agent_workdays_map.get((id_clean, proj_bucket_cat), 0)
+            if w_days == 0:
+                w_days = agent_workdays_map.get((nm_clean, proj_bucket_cat), 0)
+
+            agent_daily_rows.append({
+                "Project": proj_val,
+                "Bucket": buck_val,
+                "Nama TL": tl_val,
+                "Perusahaan": perush_master,
+                "ID Agent": k_info.get("ID_Akun_Resmi", id_raw),
+                "Nama Pengguna": k_info.get("Nama_Orang_Resmi", nm_raw),
+                "Status Kerja": st_kerja,
+                "Hari Kerja": f"{w_days} Hari" if w_days > 0 else "-",
+                "_daily_pen": pen_hari_ini,
+                "_daily_rec": rec_hari_ini,
+                "_rate_num": rate_d,
+                "Penambahan (Hari Ini)": format_num(pen_hari_ini, is_currency=True),
+                "Penerimaan (Hari Ini)": format_num(rec_hari_ini, is_currency=True),
+                "Recovery Rate (Hari Ini)": f"{rate_d:.2f}%",
+                "Jumlah Panggilan": f"{clean_numeric(r.get('Jumlah Panggilan', 0)):.2f}",
+                "Waktu Kerja Rata-rata": f"{clean_numeric(r.get('Waktu Kerja Rata-rata', 0)):.2f}",
+                "Jumlah SMS": f"{clean_numeric(r.get('Jumlah SMS', 0)):.2f}",
+                "Jumlah Pengiriman Template WABA": f"{clean_numeric(r.get('Jumlah Pengiriman Template WABA', 0)):.2f}",
+            })
+    return pd.DataFrame(agent_daily_rows)
+
 
 tab_summary_weekly, tab_team_perf, tab_daily_perf, tab_agent_senior, tab_agent_junior, tab_agent_comp, tab_training, tab_productivity, tab_wl, tab_track_agent, tab_track_tl, tab_track_comp, tab_template = st.tabs([
     "Summary Weekly & Monthly",
@@ -1690,74 +2163,13 @@ with tab_daily_perf:
         selected_daily_files = daily_absen_files_dict.get(selected_day_key, [])
 
         absen_keys_signature = "-".join([str(k) for k in sorted_day_keys])
-        daily_history_matrix, daily_history_tls, all_days_in_folder = get_daily_historical_tl_performance(absen_keys_signature)
+        daily_history_matrix, daily_history_tls, all_days_in_folder = get_daily_historical_tl_performance(absen_keys_signature + "|" + DATA_SIG)
 
-        daily_dfs_loaded = []
-        for f_path in selected_daily_files:
-            df_f = read_excel_standard(f_path)
-            if not df_f.empty:
-                daily_dfs_loaded.append(df_f)
+        df_daily_master_agents = build_daily_master_agents(selected_day_key)
 
-        if not daily_dfs_loaded:
+        if df_daily_master_agents is None:
             st.warning("Tidak ada data yang dapat dibaca pada file tanggal yang dipilih.")
         else:
-            df_daily_file_all = pd.concat(daily_dfs_loaded, ignore_index=True)
-
-            agent_daily_rows = []
-            for _, r in df_daily_file_all.iterrows():
-                id_raw = str(r.get("Nama Pengguna", "")).strip()
-                nm_raw = str(r.get("Nama", "")).strip()
-                proj_src = r.get("_source_project", "")
-                p_cat = "SK" if "SK" in proj_src else "LD"
-
-                id_clean = normalize_clean(id_raw)
-                nm_clean = normalize_clean(nm_raw)
-                acc_k = id_clean if id_clean else nm_clean
-                if not acc_k: continue
-
-                k_info = karyawan_dict.get((acc_k, p_cat)) or karyawan_dict.get((nm_clean, p_cat)) or karyawan_dict.get((acc_k, proj_src)) or {}
-                tl_val = k_info.get("Nama TL", "Unknown")
-                buck_val = k_info.get("Bucket", "Unknown")
-                proj_val = k_info.get("Project", proj_src)
-                st_kerja = k_info.get("Status Kerja", "Aktif")
-
-                is_comp, perush_master = get_master_status(tl_val, buck_val, proj_val)
-                if is_comp != "Ya":
-                    continue
-
-                pen_hari_ini = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
-                rec_hari_ini = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
-
-                if pen_hari_ini > 0:
-                    rate_d = (rec_hari_ini / pen_hari_ini * 100.0)
-
-                    proj_bucket_cat = "SK" if proj_cat == "SK" or "SK" in str(proj_val).upper() else "LD"
-                    w_days = agent_workdays_map.get((id_clean, proj_bucket_cat), 0)
-                    if w_days == 0:
-                        w_days = agent_workdays_map.get((nm_clean, proj_bucket_cat), 0)
-
-                    agent_daily_rows.append({
-                        "Project": proj_val,
-                        "Bucket": buck_val,
-                        "Nama TL": tl_val,
-                        "Perusahaan": perush_master,
-                        "ID Agent": k_info.get("ID_Akun_Resmi", id_raw),
-                        "Nama Pengguna": k_info.get("Nama_Orang_Resmi", nm_raw),
-                        "Status Kerja": st_kerja,
-                        "Hari Kerja": f"{w_days} Hari" if w_days > 0 else "-",
-                        "_daily_pen": pen_hari_ini,
-                        "_daily_rec": rec_hari_ini,
-                        "_rate_num": rate_d,
-                        "Penambahan (Hari Ini)": format_num(pen_hari_ini, is_currency=True),
-                        "Penerimaan (Hari Ini)": format_num(rec_hari_ini, is_currency=True),
-                        "Recovery Rate (Hari Ini)": f"{rate_d:.2f}%",
-                        "Jumlah Panggilan": f"{clean_numeric(r.get('Jumlah Panggilan', 0)):.2f}",
-                        "Waktu Kerja Rata-rata": f"{clean_numeric(r.get('Waktu Kerja Rata-rata', 0)):.2f}",
-                        "Jumlah SMS": f"{clean_numeric(r.get('Jumlah SMS', 0)):.2f}",
-                        "Jumlah Pengiriman Template WABA": f"{clean_numeric(r.get('Jumlah Pengiriman Template WABA', 0)):.2f}",
-                    })
-
-            df_daily_master_agents = pd.DataFrame(agent_daily_rows)
 
             daily_sub_tabs = st.tabs([
                 "S1 - SK", "D0 - SK", "S1 - LD", "S1 - LD-BA", "S0 - LD", "C - LD-C", "Semua Bucket",
@@ -1991,114 +2403,7 @@ with tab_daily_perf:
                 if not bonus_days:
                     st.info("Belum ada data harian.")
                 else:
-                    agent_bonus_accumulator = {}
-
-                    for d_key in bonus_days:
-                        files_d = daily_absen_files_dict.get(d_key, [])
-                        df_d_list = [read_excel_standard(fp) for fp in files_d if not read_excel_standard(fp).empty]
-                        if not df_d_list: continue
-                        df_d_day = pd.concat(df_d_list, ignore_index=True)
-
-                        day_tl_perf = {}
-                        for _, r in df_d_day.iterrows():
-                            id_raw = normalize_clean(r.get("Nama Pengguna", ""))
-                            nm_raw = normalize_clean(r.get("Nama", ""))
-                            proj_src = r.get("_source_project", "")
-                            p_cat = "SK" if "SK" in proj_src else "LD"
-                            acc_k = id_raw if id_raw else nm_raw
-                            if not acc_k: continue
-                            k_info = karyawan_dict.get((acc_k, p_cat)) or karyawan_dict.get((nm_raw, p_cat)) or {}
-                            tl_v = k_info.get("Nama TL", "Unknown")
-                            b_v = k_info.get("Bucket", "Unknown")
-                            p_v = k_info.get("Project", proj_src)
-                            is_c, _ = get_master_status(tl_v, b_v, p_v)
-                            if is_c != "Ya": continue
-                            pen_v = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
-                            rec_v = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
-                            if pen_v > 0:
-                                k_t_key = (p_v, b_v, tl_v)
-                                day_tl_perf.setdefault(k_t_key, {"pen": 0.0, "rec": 0.0})
-                                day_tl_perf[k_t_key]["pen"] += pen_v
-                                day_tl_perf[k_t_key]["rec"] += rec_v
-
-                        eligible_tls_today_by_div = {}
-                        tls_by_div_dict = {}
-                        for (p_d, b_d, tl_d), vals in day_tl_perf.items():
-                            rate_t = (vals["rec"] / vals["pen"] * 100.0) if vals["pen"] > 0 else 0.0
-                            tls_by_div_dict.setdefault((p_d, b_d), []).append((tl_d, rate_t))
-
-                        for (p_d, b_d), lst in tls_by_div_dict.items():
-                            lst_sorted = sorted(lst, key=lambda x: x[1], reverse=True)
-                            tot_teams_div = len(lst_sorted)
-                            if tot_teams_div >= 3:
-                                eligible_tls_today_by_div[(p_d, b_d)] = set([item[0] for item in lst_sorted[:2]])
-                            elif tot_teams_div in [1, 2]:
-                                eligible_tls_today_by_div[(p_d, b_d)] = set([item[0] for item in lst_sorted[:1]])
-                            else:
-                                eligible_tls_today_by_div[(p_d, b_d)] = set()
-
-                        div_agents_day = {}
-                        for _, r in df_d_day.iterrows():
-                            id_raw = normalize_clean(r.get("Nama Pengguna", ""))
-                            nm_raw = normalize_clean(r.get("Nama", ""))
-                            proj_src = r.get("_source_project", "")
-                            p_cat = "SK" if "SK" in proj_src else "LD"
-                            acc_k = id_raw if id_raw else nm_raw
-                            if not acc_k: continue
-                            k_info = karyawan_dict.get((acc_k, p_cat)) or karyawan_dict.get((nm_raw, p_cat)) or {}
-                            tl_v = k_info.get("Nama TL", "Unknown")
-                            b_v = k_info.get("Bucket", "Unknown")
-                            p_v = k_info.get("Project", proj_src)
-                            is_c, perush_m = get_master_status(tl_v, b_v, p_v)
-                            if is_c != "Ya": continue
-                            pen_v = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
-                            rec_v = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
-                            if pen_v > 0:
-                                r_num = (rec_v / pen_v * 100.0)
-                                div_agents_day.setdefault((p_v, b_v), []).append({
-                                    "id_agent": k_info.get("ID_Akun_Resmi", id_raw),
-                                    "nama": k_info.get("Nama_Orang_Resmi", nm_raw),
-                                    "tl": tl_v,
-                                    "perusahaan": perush_m,
-                                    "pen": pen_v,
-                                    "rec": rec_v,
-                                    "rate": r_num
-                                })
-
-                        for (p_d, b_d), ag_list in div_agents_day.items():
-                            ag_list_sorted = sorted(ag_list, key=lambda x: x["rate"], reverse=True)
-                            tot_ag_div = len(ag_list_sorted)
-                            is_ba_div = (p_d == "LD-BA" or b_d == "LD-BA" or "LD-BA" in str(p_d).upper())
-                            eligible_set_div = eligible_tls_today_by_div.get((p_d, b_d), set())
-
-                            for idx_ag, ag_item in enumerate(ag_list_sorted):
-                                rk_ag = idx_ag + 1
-                                pct_ag = rk_ag / tot_ag_div if tot_ag_div > 0 else 1.0
-                                
-                                is_mpt05 = ("MPT05" in ag_item["tl"].upper()) or ("MPT05" in ag_item["perusahaan"].upper()) or ("MPT05" in ag_item["id_agent"].upper())
-                                is_t_top = (ag_item["tl"] in eligible_set_div)
-
-                                bonus_amt = 0
-                                if is_mpt05 and is_t_top:
-                                    if pct_ag <= 0.10:
-                                        bonus_amt = 50000 if is_ba_div else 40000
-                                    elif pct_ag <= 0.20:
-                                        bonus_amt = 40000 if is_ba_div else 30000
-
-                                if bonus_amt > 0:
-                                    ag_key = ag_item["id_agent"]
-                                    if ag_key not in agent_bonus_accumulator:
-                                        agent_bonus_accumulator[ag_key] = {
-                                            "ID Agent": ag_key,
-                                            "Nama Agent": ag_item["nama"],
-                                            "Nama TL": ag_item["tl"],
-                                            "Project": p_d,
-                                            "Bucket": b_d,
-                                            "Hari Eligible": 0,
-                                            "Total Bonus (Rp)": 0,
-                                        }
-                                    agent_bonus_accumulator[ag_key]["Hari Eligible"] += 1
-                                    agent_bonus_accumulator[ag_key]["Total Bonus (Rp)"] += bonus_amt
+                    agent_bonus_accumulator = compute_agent_bonus_summary(tuple(bonus_days))
 
                     df_bonus_agents = pd.DataFrame(list(agent_bonus_accumulator.values()))
                     if df_bonus_agents.empty:
@@ -2123,169 +2428,57 @@ with tab_daily_perf:
                         )
 
             # =========================================================
-            # SUB-TAB 9: SUMMARY BONUS TEAM LEADER (Dengan Snapshot Monthly Harian Dinamis)
+            # SUB-TAB 9: SUMMARY BONUS TEAM LEADER (Dengan Rincian Harian)
             # =========================================================
             with daily_sub_tabs[8]:
                 st.markdown("### 🏆 **Summary Bonus Team Leader (Akumulasi Tanggal 1 - Akhir Bulan)**")
-                st.caption("Skema: Dinamis harian (Menghitung rank monthly kumulatif dari tgl 1 s/d hari tersebut, syarat 3-7 tim, lalu akumulasi bonus harian TL).")
+                st.caption(
+                    "Skema: Monthly = akumulasi file tgl 1 s/d tanggal terpilih. "
+                    "Divisi 2-3 tim: wajib Rank 1 monthly & Rank 1 harian. "
+                    "Divisi > 3 tim: wajib Rank 1/2 monthly & Rank 1/2 harian."
+                )
 
-                bonus_days_tl = [d for d in sorted_day_keys if isinstance(d, int) and d >= 1]
-                if not bonus_days_tl:
-                    st.info("Belum ada data harian.")
+                if not isinstance(selected_day_key, int):
+                    st.info("Nama file harian harus berupa angka tanggal (misal `5.xlsx`).")
                 else:
-                    df_monthly_base_all = weekly_processed.get("Monthly", pd.DataFrame()) if "weekly_processed" in locals() and weekly_processed else pd.DataFrame()
-                    if df_monthly_base_all.empty and "Monthly" in weekly_dict:
-                        df_monthly_base_all = process_department_weekly_data(weekly_dict["Monthly"])
+                    st.caption(f"📌 Data dihitung dari file tanggal 1 s/d {selected_day_key}.")
+                    bonus_rows_tl, tl_daily_logs = calculate_tl_daily_bonus(
+                        daily_history_matrix, daily_history_tls, selected_day_key
+                    )
 
-                    # SOLUSI DINAMIS (Poin 3): Menghitung Snapshot Monthly harian per tanggal dari tgl 1 s/d d_key
-                    # Sehingga perubahan rank monthly dari tgl 5 ke tgl 6 tercatat dan terakumulasi dengan akurat tanpa tertimpa!
-                    tl_bonus_accumulator = {}
-
-                    for d_key in bonus_days_tl:
-                        # 1. Hitung kumulatif file bulanan/departemen dari tgl 1 s/d d_key (atau gunakan file harian s/d d_key)
-                        # Untuk akurasi harian TL, kita hitung performa bulanan berjalan s/d hari ke-d_key
-                        cumulative_days = [d for d in sorted_day_keys if isinstance(d, int) and 1 <= d <= d_key]
-                        cum_daily_files = []
-                        for cd in cumulative_days:
-                            cum_daily_files.extend(daily_absen_files_dict.get(cd, []))
-
-                        # Buat mapping monthly ranks harian berdasarkan akumulasi s/d d_key
-                        daily_cum_tl_scores = {} # (p, b, tl) -> pen, rec
-                        for fp in cum_daily_files:
-                            try:
-                                df_c = read_excel_standard(fp)
-                                if df_c.empty: continue
-                                p_src = df_c["_source_project"].iloc[0] if "_source_project" in df_c.columns else "SK"
-                                p_cat = "SK" if "SK" in p_src else "LD"
-                                for _, r in df_c.iterrows():
-                                    pen = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
-                                    rec = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
-                                    if pen <= 0: continue
-                                    id_a = normalize_clean(r.get("Nama Pengguna", ""))
-                                    nm_a = normalize_clean(r.get("Nama", ""))
-                                    acc_k = id_a if id_a else nm_a
-                                    if not acc_k: continue
-                                    k_info = karyawan_dict.get((acc_k, p_cat)) or karyawan_dict.get((nm_a, p_cat)) or {}
-                                    tl_v = k_info.get("Nama TL", "Unknown")
-                                    b_v = k_info.get("Bucket", "Unknown")
-                                    p_v = k_info.get("Project", p_src)
-                                    is_c, _ = get_master_status(tl_v, b_v, p_v)
-                                    if is_c == "Ya":
-                                        k_key = (p_v, b_v, tl_v)
-                                        daily_cum_tl_scores.setdefault(k_key, {"pen": 0.0, "rec": 0.0})
-                                        daily_cum_tl_scores[k_key]["pen"] += pen
-                                        daily_cum_tl_scores[k_key]["rec"] += rec
-                            except Exception:
-                                pass
-
-                        # Susun rank monthly harian (snapshot hari ke-d_key)
-                        snapshot_monthly_ranks = {}
-                        div_tl_cum_grouped = {}
-                        for (p_v, b_v, tl_v), vals in daily_cum_tl_scores.items():
-                            rate_m = (vals["rec"] / vals["pen"] * 100.0) if vals["pen"] > 0 else 0.0
-                            div_tl_cum_grouped.setdefault((p_v, b_v), []).append({"tl": tl_v, "rate": rate_m})
-
-                        for (p_v, b_v), lst in div_tl_cum_grouped.items():
-                            lst_sorted = sorted(lst, key=lambda x: x["rate"], reverse=True)
-                            # Sesuai aturan: Jika 3 tim (rank 1 & 2 lolos), jika 4-7 tim (rank 1 & 2 lolos)
-                            snapshot_monthly_ranks[(p_v, b_v)] = set(item["tl"] for item in lst_sorted[:2])
-
-                        # 2. Ambil data khusus hari ke-d_key untuk evaluasi bonus harian TL
-                        files_d = daily_absen_files_dict.get(d_key, [])
-                        df_d_list = [read_excel_standard(fp) for fp in files_d if not read_excel_standard(fp).empty]
-                        if not df_d_list: continue
-                        df_d_day = pd.concat(df_d_list, ignore_index=True)
-
-                        day_tl_perf = {}
-                        for _, r in df_d_day.iterrows():
-                            id_raw = normalize_clean(r.get("Nama Pengguna", ""))
-                            nm_raw = normalize_clean(r.get("Nama", ""))
-                            proj_src = r.get("_source_project", "")
-                            p_cat = "SK" if "SK" in proj_src else "LD"
-                            acc_k = id_raw if id_raw else nm_raw
-                            if not acc_k: continue
-                            k_info = karyawan_dict.get((acc_k, p_cat)) or karyawan_dict.get((nm_raw, p_cat)) or {}
-                            tl_v = k_info.get("Nama TL", "Unknown")
-                            b_v = k_info.get("Bucket", "Unknown")
-                            p_v = k_info.get("Project", proj_src)
-                            is_c, perush_m = get_master_status(tl_v, b_v, p_v)
-                            if is_c != "Ya": continue
-                            pen_v = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
-                            rec_v = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
-                            if pen_v > 0:
-                                k_t_key = (p_v, b_v, tl_v)
-                                day_tl_perf.setdefault(k_t_key, {"pen": 0.0, "rec": 0.0, "perush": perush_m})
-                                day_tl_perf[k_t_key]["pen"] += pen_v
-                                day_tl_perf[k_t_key]["rec"] += rec_v
-
-                        tls_by_div = {}
-                        for (p_d, b_d, tl_d), vals in day_tl_perf.items():
-                            rate_t = (vals["rec"] / vals["pen"] * 100.0) if vals["pen"] > 0 else 0.0
-                            tls_by_div.setdefault((p_d, b_d), []).append({"tl": tl_d, "rate": rate_t, "perush": vals["perush"]})
-
-                        for (p_d, b_d), lst in tls_by_div.items():
-                            lst_sorted = sorted(lst, key=lambda x: x["rate"], reverse=True)
-                            tot_teams_div = len(lst_sorted)
-                            is_ba_div = (p_d == "LD-BA" or b_d == "LD-BA" or "LD-BA" in str(p_d).upper())
-                            top2_snapshot_set = snapshot_monthly_ranks.get((p_d, b_d), set())
-
-                            for idx_tl, tl_item in enumerate(lst_sorted):
-                                rk_tl = idx_tl + 1
-                                tl_name = tl_item["tl"]
-
-                                if rk_tl == 2 and tot_teams_div < 3:
-                                    continue
-
-                                if tl_name in top2_snapshot_set:
-                                    b_amt = 0
-                                    if tot_teams_div == 3:
-                                        if rk_tl == 1:
-                                            b_amt = 50000 if is_ba_div else 40000
-                                        elif rk_tl == 2:
-                                            b_amt = 40000 if is_ba_div else 30000
-                                    elif 4 <= tot_teams_div <= 7:
-                                        if rk_tl == 1:
-                                            b_amt = 50000 if is_ba_div else 40000
-                                        elif rk_tl == 2:
-                                            b_amt = 40000 if is_ba_div else 30000
-
-                                    if b_amt > 0:
-                                        if tl_name not in tl_bonus_accumulator:
-                                            tl_bonus_accumulator[tl_name] = {
-                                                "Nama TL": tl_name,
-                                                "Project": p_d,
-                                                "Bucket": b_d,
-                                                "Perusahaan": tl_item["perush"],
-                                                "Status Monthly (Dinamis)": "Lolos Rank 1/2",
-                                                "Hari Rank 1": 0,
-                                                "Hari Rank 2": 0,
-                                                "Total Bonus TL (Rp)": 0,
-                                            }
-                                        if rk_tl == 1:
-                                            tl_bonus_accumulator[tl_name]["Hari Rank 1"] += 1
-                                        elif rk_tl == 2:
-                                            tl_bonus_accumulator[tl_name]["Hari Rank 2"] += 1
-                                        tl_bonus_accumulator[tl_name]["Total Bonus TL (Rp)"] += b_amt
-
-                    df_bonus_tls = pd.DataFrame(list(tl_bonus_accumulator.values()))
+                    df_bonus_tls = pd.DataFrame(bonus_rows_tl)
                     if df_bonus_tls.empty:
-                        st.info("Belum ada TL MPT05 yang memenuhi syarat bonus.")
+                        st.info("Belum ada Team Leader yang memenuhi syarat bonus.")
                     else:
-                        df_bonus_tls = df_bonus_tls.sort_values(by="Total Bonus TL (Rp)", ascending=False).reset_index(drop=True)
+                        df_bonus_tls = df_bonus_tls.sort_values(
+                            by=["Total Bonus TL (Rp)", "Hari Rank 1"], ascending=[False, False]
+                        ).reset_index(drop=True)
                         df_bonus_tls.insert(0, "Rank", [f"#{i+1}" for i in range(len(df_bonus_tls))])
-                        df_bonus_tls["Total Bonus TL Format"] = df_bonus_tls["Total Bonus TL (Rp)"].apply(lambda v: f"Rp {int(v):,}".replace(",", "."))
+                        df_bonus_tls["Total Bonus TL Format"] = df_bonus_tls["Total Bonus TL (Rp)"].apply(
+                            lambda v: f"Rp {int(v):,}".replace(",", ".")
+                        )
 
-                        cols_tl_view = ["Rank", "Nama TL", "Perusahaan", "Project", "Bucket", "Status Monthly (Dinamis)", "Hari Rank 1", "Hari Rank 2", "Total Bonus TL Format"]
+                        cols_tl_view = ["Rank", "Nama TL", "Perusahaan", "Project", "Bucket",
+                                        "Status Monthly (Dinamis)", "Hari Rank 1", "Hari Rank 2", "Total Bonus TL Format"]
                         display_full_table(translate_columns(df_bonus_tls[cols_tl_view]))
+
+                        with st.expander("🔍 **Lihat Rincian Log Harian Transparan Team Leader**", expanded=False):
+                            sel_tl_log = st.selectbox(
+                                "Pilih Team Leader untuk Melihat Log Harian:",
+                                options=list(tl_daily_logs.keys()), key="sel_tl_log_box"
+                            )
+                            if sel_tl_log and sel_tl_log in tl_daily_logs:
+                                display_full_table(translate_columns(pd.DataFrame(tl_daily_logs[sel_tl_log])))
 
                         excel_buf_tl = io.BytesIO()
                         with pd.ExcelWriter(excel_buf_tl, engine="openpyxl") as writer:
-                            df_bonus_tls.drop(columns=["Total Bonus TL Format"]).to_excel(writer, sheet_name="Summary_Bonus_TL", index=False)
+                            df_bonus_tls.drop(columns=["Total Bonus TL Format", "_log_label"]).to_excel(
+                                writer, sheet_name="Summary_Bonus_TL", index=False)
 
                         st.download_button(
                             label="📥 Download Summary Bonus TL (.xlsx)",
                             data=excel_buf_tl.getvalue(),
-                            file_name=f"Summary_Bonus_TL_Tgl_1_onwards.xlsx",
+                            file_name=f"Summary_Bonus_TL_Tgl_1_sd_{selected_day_key}.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
 
@@ -2310,109 +2503,7 @@ with tab_daily_perf:
                 if not weekly_days_valid:
                     st.info(f"Belum ada data harian untuk periode {sel_wk_label} di folder absensi bulan berjalan.")
                 else:
-                    weekly_agent_accum = {}
-
-                    for d_key in weekly_days_valid:
-                        files_d = daily_absen_files_dict.get(d_key, [])
-                        df_d_list = [read_excel_standard(fp) for fp in files_d if not read_excel_standard(fp).empty]
-                        if not df_d_list: continue
-                        df_d_wk = pd.concat(df_d_list, ignore_index=True)
-
-                        for _, r in df_d_wk.iterrows():
-                            id_raw = normalize_clean(r.get("Nama Pengguna", ""))
-                            nm_raw = normalize_clean(r.get("Nama", ""))
-                            proj_src = r.get("_source_project", "")
-                            p_cat = "SK" if "SK" in proj_src else "LD"
-                            acc_k = id_raw if id_raw else nm_raw
-                            if not acc_k: continue
-                            k_info = karyawan_dict.get((acc_k, p_cat)) or karyawan_dict.get((nm_raw, p_cat)) or {}
-                            tl_v = k_info.get("Nama TL", "Unknown")
-                            b_v = k_info.get("Bucket", "Unknown")
-                            p_v = k_info.get("Project", proj_src)
-                            is_c, perush_m = get_master_status(tl_v, b_v, p_v)
-                            if is_c != "Ya": continue
-
-                            pen_v = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
-                            rec_v = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
-                            if pen_v > 0:
-                                ag_key = (k_info.get("ID_Akun_Resmi", id_raw), p_v, b_v)
-                                if ag_key not in weekly_agent_accum:
-                                    weekly_agent_accum[ag_key] = {
-                                        "ID Agent": k_info.get("ID_Akun_Resmi", id_raw),
-                                        "Nama Agent": k_info.get("Nama_Orang_Resmi", nm_raw),
-                                        "Nama TL": tl_v,
-                                        "Project": p_v,
-                                        "Bucket": b_v,
-                                        "Perusahaan": perush_m,
-                                        "pen": 0.0,
-                                        "rec": 0.0,
-                                    }
-                                weekly_agent_accum[ag_key]["pen"] += pen_v
-                                weekly_agent_accum[ag_key]["rec"] += rec_v
-
-                    wk_tl_accum = {}
-                    for ag_k, meta in weekly_agent_accum.items():
-                        t_key = (meta["Project"], meta["Bucket"], meta["Nama TL"])
-                        wk_tl_accum.setdefault(t_key, {"pen": 0.0, "rec": 0.0})
-                        wk_tl_accum[t_key]["pen"] += meta["pen"]
-                        wk_tl_accum[t_key]["rec"] += meta["rec"]
-
-                    wk_eligible_tls = set()
-                    wk_tls_by_div = {}
-                    for (p_d, b_d, tl_d), vals in wk_tl_accum.items():
-                        rate_t = (vals["rec"] / vals["pen"] * 100.0) if vals["pen"] > 0 else 0.0
-                        wk_tls_by_div.setdefault((p_d, b_d), []).append((tl_d, rate_t))
-
-                    for (p_d, b_d), lst in wk_tls_by_div.items():
-                        lst_sorted = sorted(lst, key=lambda x: x[1], reverse=True)
-                        tot_teams_div = len(lst_sorted)
-                        if tot_teams_div == 3:
-                            for t_n, _ in lst_sorted[:2]:
-                                wk_eligible_tls.add((p_d, b_d, t_n))
-                        elif 4 <= tot_teams_div <= 7:
-                            for t_n, _ in lst_sorted[:2]:
-                                wk_eligible_tls.add((p_d, b_d, t_n))
-                        elif tot_teams_div in [1, 2]:
-                            for t_n, _ in lst_sorted[:1]:
-                                wk_eligible_tls.add((p_d, b_d, t_n))
-
-                    wk_ag_list = []
-                    for ag_k, meta in weekly_agent_accum.items():
-                        rate_a = (meta["rec"] / meta["pen"] * 100.0) if meta["pen"] > 0 else 0.0
-                        wk_ag_list.append({**meta, "rate": rate_a})
-
-                    div_wk_agents = {}
-                    for ag_item in wk_ag_list:
-                        div_wk_agents.setdefault((ag_item["Project"], ag_item["Bucket"]), []).append(ag_item)
-
-                    eligible_weekly_rows = []
-                    for (p_d, b_d), ags in div_wk_agents.items():
-                        ags_sorted = sorted(ags, key=lambda x: x["rate"], reverse=True)
-                        tot_div_ag = len(ags_sorted)
-                        is_ba_div = (p_d == "LD-BA" or b_d == "LD-BA" or "LD-BA" in str(p_d).upper())
-
-                        for idx_a, ag_item in enumerate(ags_sorted):
-                            rk_a = idx_a + 1
-                            pct_a = rk_a / tot_div_ag if tot_div_ag > 0 else 1.0
-
-                            is_mpt05 = ("MPT05" in ag_item["Nama TL"].upper()) or ("MPT05" in ag_item["Perusahaan"].upper()) or ("MPT05" in ag_item["ID Agent"].upper())
-                            is_team_eligible = ((ag_item["Project"], ag_item["Bucket"], ag_item["Nama TL"]) in wk_eligible_tls)
-                            is_top10 = (pct_a <= 0.10)
-
-                            status_w = "Ineligible"
-                            if is_mpt05 and is_team_eligible and is_top10:
-                                bonus_w_amt = 150000 if is_ba_div else 100000
-                                status_w = f"Eligible (Rp {bonus_w_amt:,})".replace(",", ".")
-
-                            eligible_weekly_rows.append({
-                                "ID Agent": ag_item["ID Agent"],
-                                "Nama Agent": ag_item["Nama Agent"],
-                                "Nama TL": ag_item["Nama TL"],
-                                "Project": ag_item["Project"],
-                                "Bucket": ag_item["Bucket"],
-                                "Recovery Rate (Periode)": f"{ag_item['rate']:.2f}%",
-                                "Weekly Status": status_w,
-                            })
+                    weekly_agent_accum, eligible_weekly_rows = compute_weekly_bonus_raw(tuple(weekly_days_valid))
 
                     df_weekly_res = pd.DataFrame(eligible_weekly_rows)
                     if df_weekly_res.empty:
