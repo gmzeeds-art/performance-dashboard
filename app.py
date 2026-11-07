@@ -1449,8 +1449,9 @@ def render_agent_bucket_tabs(df_agent_source):
 
 @heavy
 def compute_agent_bonus_summary(bonus_days):
-    """Akumulasi bonus agen per hari (di-cache lintas rerun)."""
+    """Akumulasi bonus agen per hari + log harian transparan (di-cache lintas rerun)."""
     agent_bonus_accumulator = {}
+    agent_daily_logs = {}  # id_agent -> list log harian (khusus agen MPT05)
 
     for d_key in bonus_days:
         files_d = daily_absen_files_dict.get(d_key, [])
@@ -1544,6 +1545,20 @@ def compute_agent_bonus_summary(bonus_days):
                     elif pct_ag <= 0.20:
                         bonus_amt = 40000 if is_ba_div else 30000
 
+                if is_mpt05:
+                    agent_daily_logs.setdefault(ag_item["id_agent"], []).append({
+                        "Tanggal": f"Tgl {d_key}",
+                        "Project": p_d,
+                        "Bucket": b_d,
+                        "Nama TL": ag_item["tl"],
+                        "Penambahan (Hari Ini)": format_num(ag_item["pen"], is_currency=True),
+                        "Penerimaan (Hari Ini)": format_num(ag_item["rec"], is_currency=True),
+                        "Recovery Rate (%)": f"{ag_item['rate']:.2f}%",
+                        "Rank Harian": f"#{rk_ag} dari {tot_ag_div}",
+                        "Status Tim": "Lolos Top Team" if is_t_top else "Tidak Lolos Top Team",
+                        "Bonus Harian": f"Rp {bonus_amt:,}".replace(",", ".") if bonus_amt > 0 else "Rp 0",
+                    })
+
                 if bonus_amt > 0:
                     ag_key = ag_item["id_agent"]
                     if ag_key not in agent_bonus_accumulator:
@@ -1558,13 +1573,15 @@ def compute_agent_bonus_summary(bonus_days):
                         }
                     agent_bonus_accumulator[ag_key]["Hari Eligible"] += 1
                     agent_bonus_accumulator[ag_key]["Total Bonus (Rp)"] += bonus_amt
-    return agent_bonus_accumulator
+    return agent_bonus_accumulator, agent_daily_logs
 
 
 @heavy
 def compute_weekly_bonus_raw(weekly_days_valid):
     """Agregasi weekly bonus (di-cache lintas rerun)."""
+    MIN_HARI_KERJA_WEEKLY = 5  # minimal hari kerja dalam periode weekly agar eligible bonus mingguan
     weekly_agent_accum = {}
+    attendance_days = {}  # (id_agent, project, bucket) -> set tanggal agen muncul di file harian
 
     for d_key in weekly_days_valid:
         files_d = daily_absen_files_dict.get(d_key, [])
@@ -1588,6 +1605,10 @@ def compute_weekly_bonus_raw(weekly_days_valid):
 
             pen_v = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
             rec_v = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
+
+            # Absensi: nama agen muncul di file tanggal tsb = masuk kerja hari itu
+            attendance_days.setdefault((k_info.get("ID_Akun_Resmi", id_raw), p_v, b_v), set()).add(d_key)
+
             if pen_v > 0:
                 ag_key = (k_info.get("ID_Akun_Resmi", id_raw), p_v, b_v)
                 if ag_key not in weekly_agent_accum:
@@ -1603,6 +1624,9 @@ def compute_weekly_bonus_raw(weekly_days_valid):
                     }
                 weekly_agent_accum[ag_key]["pen"] += pen_v
                 weekly_agent_accum[ag_key]["rec"] += rec_v
+
+    for ag_k, meta in weekly_agent_accum.items():
+        meta["hari_kerja"] = len(attendance_days.get(ag_k, ()))
 
     wk_tl_accum = {}
     for ag_k, meta in weekly_agent_accum.items():
@@ -1653,8 +1677,9 @@ def compute_weekly_bonus_raw(weekly_days_valid):
             is_team_eligible = ((ag_item["Project"], ag_item["Bucket"], ag_item["Nama TL"]) in wk_eligible_tls)
             is_top10 = (pct_a <= 0.10)
 
+            hari_kerja_w = ag_item.get("hari_kerja", 0)
             status_w = "Ineligible"
-            if is_mpt05 and is_team_eligible and is_top10:
+            if is_mpt05 and is_team_eligible and is_top10 and hari_kerja_w >= MIN_HARI_KERJA_WEEKLY:
                 bonus_w_amt = 150000 if is_ba_div else 100000
                 status_w = f"Eligible (Rp {bonus_w_amt:,})".replace(",", ".")
 
@@ -1664,8 +1689,10 @@ def compute_weekly_bonus_raw(weekly_days_valid):
                 "Nama TL": ag_item["Nama TL"],
                 "Project": ag_item["Project"],
                 "Bucket": ag_item["Bucket"],
+                "Ranking Interval": get_ranking_interval(rk_a, tot_div_ag),
                 "Recovery Rate (Periode)": f"{ag_item['rate']:.2f}%",
                 "_rate_num": ag_item["rate"],
+                "Total Hari Kerja": f"{hari_kerja_w} Hari",
                 "Weekly Status": status_w,
             })
     return weekly_agent_accum, eligible_weekly_rows
@@ -2423,7 +2450,7 @@ with tab_daily_perf:
                 if not bonus_days:
                     st.info("Belum ada data harian.")
                 else:
-                    agent_bonus_accumulator = compute_agent_bonus_summary(tuple(bonus_days))
+                    agent_bonus_accumulator, agent_daily_logs = compute_agent_bonus_summary(tuple(bonus_days))
 
                     df_bonus_agents = pd.DataFrame(list(agent_bonus_accumulator.values()))
                     if df_bonus_agents.empty:
@@ -2435,6 +2462,14 @@ with tab_daily_perf:
                         
                         display_cols = ["Rank", "ID Agent", "Nama Agent", "Nama TL", "Project", "Bucket", "Hari Eligible", "Total Bonus (Rp) Format"]
                         display_full_table(translate_columns(df_bonus_agents[display_cols]))
+
+                        with st.expander("🔍 **Lihat Rincian Log Harian Transparan Agen**", expanded=False):
+                            # Agen yang mendapat bonus (urut Rank) tampil lebih dulu, lalu agen MPT05 lainnya
+                            ag_order = list(df_bonus_agents["ID Agent"])
+                            ag_order += sorted(k for k in agent_daily_logs.keys() if k not in set(ag_order))
+                            sel_ag_log = st.selectbox("Pilih Agen untuk Melihat Log Harian:", options=ag_order, key="sel_ag_log_box")
+                            if sel_ag_log and sel_ag_log in agent_daily_logs:
+                                display_full_table(translate_columns(pd.DataFrame(agent_daily_logs[sel_ag_log])))
 
                         excel_buf_ag = io.BytesIO()
                         with pd.ExcelWriter(excel_buf_ag, engine="openpyxl") as writer:
@@ -2507,7 +2542,7 @@ with tab_daily_perf:
             # =========================================================
             with daily_sub_tabs[9]:
                 st.markdown("### 🌟 **Weekly Bonus Agents (W1, W2, W3, W4)**")
-                st.caption("Skema: 3 tim (Rank 1) atau 4-7 tim (Rank 1/2), agent Top 10%. Nominal: Rp 100.000 (Reg) | Rp 150.000 (BA).")
+                st.caption("Skema: 3 tim (Rank 1) atau 4-7 tim (Rank 1/2), agent Top 10%, minimal 5 hari kerja dalam periode. Nominal: Rp 100.000 (Reg) | Rp 150.000 (BA).")
 
                 weekly_periods_map = {
                     "W1 (Tgl 1 - 7)": list(range(1, 8)),
@@ -2563,6 +2598,9 @@ with tab_daily_perf:
                                     df_wk_div = df_wk_div.sort_values(by="_sort_rate", ascending=False, kind="stable").reset_index(drop=True)
                                     df_wk_div = df_wk_div.drop(columns=["_sort_rate", "_rate_num"], errors="ignore")
                                     df_wk_div.insert(0, "Rank", [f"#{i+1}" for i in range(len(df_wk_div))])
+                                    wk_cols = ["Rank", "Ranking Interval", "ID Agent", "Nama Agent", "Nama TL", "Project", "Bucket",
+                                               "Recovery Rate (Periode)", "Total Hari Kerja", "Weekly Status"]
+                                    df_wk_div = df_wk_div[[c for c in wk_cols if c in df_wk_div.columns]]
                                     display_full_table(translate_columns(df_wk_div))
 
 with tab_agent_senior:
@@ -3039,6 +3077,7 @@ with tab_productivity:
                     )
                     html_tbl.append(total_html)
                     html_tbl.append('</tbody></table></div>')
+                    st.markdown("".join(html_tbl), unsafe_allow_html=True)
 
 with tab_wl:
     st.caption("Daftar Warning Letter untuk Agen dan Team Leader (警告信名单 — Khusus Agen > 7 Hari Kerja)")
