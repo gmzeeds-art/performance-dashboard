@@ -152,6 +152,12 @@ def _mtime(path):
 
 def compute_data_signature(rawdata_dir, master_file):
     h = hashlib.md5()
+    # Versi kode ikut menjadi kunci cache: setiap app.py diubah/di-deploy, cache lama otomatis tidak dipakai.
+    try:
+        with open(os.path.abspath(__file__), "rb") as _f:
+            h.update(_f.read())
+    except Exception:
+        pass
     h.update(f"{master_file}:{_mtime(master_file)}".encode())
     for root, dirs, files in os.walk(rawdata_dir):
         dirs.sort()
@@ -714,7 +720,8 @@ if df_master is not None and not df_master.empty:
         )
 _master_status_memo = {}
 
-def get_master_status(tl, bucket, project):
+def _master_match(tl, bucket, project):
+    """(is_comp, perusahaan, project_master) - di-memo; lookup O(1)."""
     memo_key = (tl, bucket, project)
     hit = _master_status_memo.get(memo_key)
     if hit is not None:
@@ -724,17 +731,25 @@ def get_master_status(tl, bucket, project):
     b_clean = normalize_clean(bucket)
     p_clean = normalize_clean(project)
 
-    result = ("Tidak", "Non-Kompetisi")
+    result = ("Tidak", "Non-Kompetisi", "")
     if "EXTERNAL COLLECTION" in t_clean or t_clean in ["INTERNAL COLLECTION-2", "W-MPT02-AVG"]:
         pass
     elif _master_index:
         for m_proj, m_perush in _master_index.get((t_clean, b_clean), ()):
             if p_clean == m_proj or p_clean in m_proj or m_proj in p_clean:
-                result = ("Ya", m_perush)
+                result = ("Ya", m_perush, m_proj)
                 break
 
     _master_status_memo[memo_key] = result
     return result
+
+def get_master_status(tl, bucket, project):
+    r = _master_match(tl, bucket, project)
+    return r[0], r[1]
+
+def get_master_project(tl, bucket, project):
+    """Project resmi dari master (SK / LD / LD-BA / LD-C) untuk TL + bucket tsb."""
+    return _master_match(tl, bucket, project)[2]
 
 @heavy
 def compute_daily_comp_maps(daily_files):
@@ -790,17 +805,18 @@ def compute_daily_comp_maps(daily_files):
                     pen_d = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
                     rec_d = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
 
-                    # KUNCI memakai project file (SK/LD) agar cocok dengan data Monthly/Weekly yang hanya
-                    # mengenal Project "SK"/"LD" (tim BA & bucket C dihitung di "LD").
-                    k_comp = (p_cat, buck_val, perush)
-                    daily_comp_map.setdefault(k_comp, {"pen": 0.0, "rec": 0.0})
-                    daily_comp_map[k_comp]["pen"] += pen_d
-                    daily_comp_map[k_comp]["rec"] += rec_d
+                    # Disimpan di 2 kunci: project file (SK/LD, cocok dgn tabel Monthly/Weekly) DAN project master
+                    # (LD-BA / LD-C, untuk tab divisi BA & C). Bila sama, hanya satu kunci (tidak dobel hitung).
+                    for proj_key in {p_cat, proj_val}:
+                        k_comp = (proj_key, buck_val, perush)
+                        daily_comp_map.setdefault(k_comp, {"pen": 0.0, "rec": 0.0})
+                        daily_comp_map[k_comp]["pen"] += pen_d
+                        daily_comp_map[k_comp]["rec"] += rec_d
 
-                    k_tl = (p_cat, buck_val, tl_val)  # dicari dengan NAMA TL oleh tabel Performa Harian
-                    daily_tl_map.setdefault(k_tl, {"pen": 0.0, "rec": 0.0})
-                    daily_tl_map[k_tl]["pen"] += pen_d
-                    daily_tl_map[k_tl]["rec"] += rec_d
+                        k_tl = (proj_key, buck_val, tl_val)  # dicari dengan NAMA TL oleh tabel Performa Harian
+                        daily_tl_map.setdefault(k_tl, {"pen": 0.0, "rec": 0.0})
+                        daily_tl_map[k_tl]["pen"] += pen_d
+                        daily_tl_map[k_tl]["rec"] += rec_d
         except Exception:
             pass
     return daily_comp_map, daily_tl_map
@@ -830,10 +846,12 @@ def process_department_weekly_data(file_list):
 
                     is_comp, matched_comp = get_master_status(tl_raw, bucket_raw, proj_hint)
                     matched_proj = proj_hint
+                    proj_master = get_master_project(tl_raw, bucket_raw, proj_hint) or proj_hint
 
                     if is_comp == "Ya":
                         records.append({
                             "Project": matched_proj,
+                            "Project Master": proj_master,
                             "Bucket": bucket_raw,
                             "Nama TL": tl_raw,
                             "Perusahaan": matched_comp,
@@ -1647,6 +1665,7 @@ def compute_weekly_bonus_raw(weekly_days_valid):
                 "Project": ag_item["Project"],
                 "Bucket": ag_item["Bucket"],
                 "Recovery Rate (Periode)": f"{ag_item['rate']:.2f}%",
+                "_rate_num": ag_item["rate"],
                 "Weekly Status": status_w,
             })
     return weekly_agent_accum, eligible_weekly_rows
@@ -1760,7 +1779,8 @@ with tab_summary_weekly:
 
                 def filter_data(df_in):
                     if df_in.empty: return df_in
-                    return df_in[(df_in["Bucket"] == b_filt) & (df_in["Project"] == p_filt)]
+                    proj_master_col = df_in["Project Master"] if "Project Master" in df_in.columns else df_in["Project"]
+                    return df_in[(df_in["Bucket"] == b_filt) & ((df_in["Project"] == p_filt) | (proj_master_col == p_filt))]
 
                 has_any_data = any(
                     not filter_data(weekly_processed.get(p, pd.DataFrame())).empty
@@ -2509,9 +2529,41 @@ with tab_daily_perf:
                     if df_weekly_res.empty:
                         st.info(f"Tidak ada data weekly bonus untuk {sel_wk_label}.")
                     else:
-                        df_weekly_res = df_weekly_res.sort_values(by="Weekly Status", ascending=False).reset_index(drop=True)
-                        df_weekly_res.insert(0, "Rank", [f"#{i+1}" for i in range(len(df_weekly_res))])
-                        display_full_table(translate_columns(df_weekly_res))
+                        # Satu sub-tab per divisi; di tiap tab diurutkan Recovery Rate tertinggi -> terendah
+                        weekly_div_tabs = [
+                            ("S1 - SK", "S1", "SK"),
+                            ("D0 - SK", "D0", "SK"),
+                            ("S1 - LD", "S1", "LD"),
+                            ("S1 - LD-BA", "S1", "LD-BA"),
+                            ("S0 - LD", "S0", "LD"),
+                            ("C - LD-C", "C", "LD-C"),
+                            ("Semua Bucket", None, None),
+                        ]
+                        wk_tab_objs = st.tabs([lbl for lbl, _, _ in weekly_div_tabs])
+                        for wk_tab, (wk_lbl, wk_b, wk_p) in zip(wk_tab_objs, weekly_div_tabs):
+                            with wk_tab:
+                                if wk_b is None:
+                                    df_wk_div = df_weekly_res.copy()
+                                else:
+                                    df_wk_div = df_weekly_res[
+                                        (df_weekly_res["Bucket"] == wk_b) & (df_weekly_res["Project"] == wk_p)
+                                    ].copy()
+
+                                if df_wk_div.empty:
+                                    st.info(f"Tidak ada data weekly bonus untuk divisi {wk_lbl} pada {sel_wk_label}.")
+                                else:
+                                    # Urutkan dari angka yang tampil di kolom Recovery Rate (tidak bergantung pada kolom tersembunyi)
+                                    if "_rate_num" in df_wk_div.columns:
+                                        df_wk_div["_sort_rate"] = df_wk_div["_rate_num"].astype(float)
+                                    else:
+                                        df_wk_div["_sort_rate"] = pd.to_numeric(
+                                            df_wk_div["Recovery Rate (Periode)"].astype(str).str.replace("%", "", regex=False),
+                                            errors="coerce"
+                                        ).fillna(0.0)
+                                    df_wk_div = df_wk_div.sort_values(by="_sort_rate", ascending=False, kind="stable").reset_index(drop=True)
+                                    df_wk_div = df_wk_div.drop(columns=["_sort_rate", "_rate_num"], errors="ignore")
+                                    df_wk_div.insert(0, "Rank", [f"#{i+1}" for i in range(len(df_wk_div))])
+                                    display_full_table(translate_columns(df_wk_div))
 
 with tab_agent_senior:
     st.caption("Performance Agent (>7 Hari Kerja) — Akumulasi MTD + Daily, Berkompetisi Penuh (出勤天数 > 7天坐席排行榜)")
