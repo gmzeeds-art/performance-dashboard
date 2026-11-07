@@ -805,18 +805,19 @@ def compute_daily_comp_maps(daily_files):
                     pen_d = clean_numeric(r.get("Total Penambahan Hari Ini", 0))
                     rec_d = clean_numeric(r.get("Total Penerimaan Hari Ini", 0))
 
-                    # Disimpan di 2 kunci: project file (SK/LD, cocok dgn tabel Monthly/Weekly) DAN project master
-                    # (LD-BA / LD-C, untuk tab divisi BA & C). Bila sama, hanya satu kunci (tidak dobel hitung).
-                    for proj_key in {p_cat, proj_val}:
-                        k_comp = (proj_key, buck_val, perush)
-                        daily_comp_map.setdefault(k_comp, {"pen": 0.0, "rec": 0.0})
-                        daily_comp_map[k_comp]["pen"] += pen_d
-                        daily_comp_map[k_comp]["rec"] += rec_d
+                    # KUNCI memakai project resmi master (SK / LD / LD-BA / LD-C) - sama dengan data bulanan/mingguan,
+                    # supaya daily tim BA/C masuk divisinya sendiri dan tidak tercampur ke LD reguler.
+                    proj_key = get_master_project(tl_val, buck_val, proj_val) or proj_val
 
-                        k_tl = (proj_key, buck_val, tl_val)  # dicari dengan NAMA TL oleh tabel Performa Harian
-                        daily_tl_map.setdefault(k_tl, {"pen": 0.0, "rec": 0.0})
-                        daily_tl_map[k_tl]["pen"] += pen_d
-                        daily_tl_map[k_tl]["rec"] += rec_d
+                    k_comp = (proj_key, buck_val, perush)
+                    daily_comp_map.setdefault(k_comp, {"pen": 0.0, "rec": 0.0})
+                    daily_comp_map[k_comp]["pen"] += pen_d
+                    daily_comp_map[k_comp]["rec"] += rec_d
+
+                    k_tl = (proj_key, buck_val, tl_val)  # dicari dengan NAMA TL oleh tabel Performa Harian
+                    daily_tl_map.setdefault(k_tl, {"pen": 0.0, "rec": 0.0})
+                    daily_tl_map[k_tl]["pen"] += pen_d
+                    daily_tl_map[k_tl]["rec"] += rec_d
         except Exception:
             pass
     return daily_comp_map, daily_tl_map
@@ -845,13 +846,12 @@ def process_department_weekly_data(file_list):
                     rec = clean_numeric(r.get("Jumlah pembayaran", 0))
 
                     is_comp, matched_comp = get_master_status(tl_raw, bucket_raw, proj_hint)
-                    matched_proj = proj_hint
-                    proj_master = get_master_project(tl_raw, bucket_raw, proj_hint) or proj_hint
+                    # Divisi ditentukan master: tim BA (LD-BA) & bucket C (LD-C) TIDAK dicampur ke LD reguler
+                    matched_proj = get_master_project(tl_raw, bucket_raw, proj_hint) or proj_hint
 
                     if is_comp == "Ya":
                         records.append({
                             "Project": matched_proj,
-                            "Project Master": proj_master,
                             "Bucket": bucket_raw,
                             "Nama TL": tl_raw,
                             "Perusahaan": matched_comp,
@@ -1806,8 +1806,7 @@ with tab_summary_weekly:
 
                 def filter_data(df_in):
                     if df_in.empty: return df_in
-                    proj_master_col = df_in["Project Master"] if "Project Master" in df_in.columns else df_in["Project"]
-                    return df_in[(df_in["Bucket"] == b_filt) & ((df_in["Project"] == p_filt) | (proj_master_col == p_filt))]
+                    return df_in[(df_in["Bucket"] == b_filt) & (df_in["Project"] == p_filt)]
 
                 has_any_data = any(
                     not filter_data(weekly_processed.get(p, pd.DataFrame())).empty
@@ -2955,7 +2954,11 @@ with tab_productivity:
                 tot_data_today = clean_numeric(r.get("Jumlah total data hari ini", 0))
                 jml_calls = clean_numeric(r.get("Jumlah Panggilan", 0))
                 jml_calls_success = clean_numeric(r.get("Jumlah Panggilan Berhasil", 0))
-                connected_rate = (jml_calls_success / jml_calls * 100.0) if jml_calls > 0 else 0.0
+                # Connected Rate diambil LANGSUNG dari kolom "Tingkat Keberhasilan Panggilan" (mis. "4.29%" -> 4.29)
+                if "Tingkat Keberhasilan Panggilan" in r.index and not pd.isna(r.get("Tingkat Keberhasilan Panggilan")):
+                    connected_rate = clean_numeric(r.get("Tingkat Keberhasilan Panggilan", 0))
+                else:
+                    connected_rate = (jml_calls_success / jml_calls * 100.0) if jml_calls > 0 else 0.0
 
                 work_time = clean_numeric(r.get("Waktu Kerja Rata-rata", 0))
                 jml_sms = clean_numeric(r.get("Jumlah SMS", 0))
@@ -3056,7 +3059,7 @@ with tab_productivity:
                     avg_calls = group_sorted["Calls"].mean()
                     tot_calls_succ = group_sorted["Calls_Success"].sum()
                     tot_calls_all = group_sorted["Calls"].sum()
-                    avg_conn = (tot_calls_succ / tot_calls_all * 100.0) if tot_calls_all > 0 else 0.0
+                    avg_conn = group_sorted["Connected_Rate"].mean()  # rata-rata kolom Tingkat Keberhasilan Panggilan
                     avg_work = group_sorted["Work_Time"].mean()
                     tot_sms = group_sorted["SMS"].sum()
                     tot_waba = group_sorted["WABA"].sum()
