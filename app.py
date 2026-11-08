@@ -1227,7 +1227,8 @@ def calculate_warning_letter_data(df_period_all, periode_name=""):
 
     wl_agents, wl_tls = [], []
     for (p, b), grp in df_comp.groupby(["Project", "Bucket"]):
-        grp_ag = grp[grp["Hari Kerja Angka"] > 7].copy()
+        # Semua agen dalam file periode ikut dievaluasi (tanpa syarat >7 hari kerja)
+        grp_ag = grp.copy()
         if not grp_ag.empty:
             grp_ag["_tot_pen"] = grp_ag["Total Penambahan Hari Ini_Total"]
             grp_ag["_tot_rec"] = grp_ag["Total Penerimaan Hari Ini_Total"]
@@ -1252,7 +1253,7 @@ def calculate_warning_letter_data(df_period_all, periode_name=""):
                             "Project": p,
                             "Bucket": b,
                             "Rank": f"#{rank_ag}",
-                            "Peringkat di Bucket": f"Rank #{rank_ag} dari {total_ag} Agen (>7 Hari)",
+                            "Peringkat di Bucket": f"Rank #{rank_ag} dari {total_ag} Agen",
                             "Persentil Rank": f"Bottom {int(round((1 - pct_ag + (1/total_ag))*100))}%",
                             "Nama TL": row_ag.get("Nama TL", ""),
                             "ID Agent": row_ag.get("ID Agent", ""),
@@ -2219,7 +2220,7 @@ with tab_daily_perf:
 
             daily_sub_tabs = st.tabs([
                 "S1 - SK", "D0 - SK", "S1 - LD", "S1 - LD-BA", "S0 - LD", "C - LD-C", "Semua Bucket",
-                "🎁 Summary Bonus Agents", "🏆 Summary Bonus TL", "🌟 Weekly Bonus Agents (25-31)"
+                "🎁 Summary Bonus Agents", "🏆 Summary Bonus TL", "🌟 Weekly Bonus Agents"
             ])
 
             def render_daily_absen_view(df_subset_agents, p_code, b_code, title_box=None):
@@ -3083,7 +3084,7 @@ with tab_productivity:
                     st.markdown("".join(html_tbl), unsafe_allow_html=True)
 
 with tab_wl:
-    st.caption("Daftar Warning Letter untuk Agen dan Team Leader (警告信名单 — Khusus Agen > 7 Hari Kerja)")
+    st.caption("Daftar Warning Letter untuk Agen dan Team Leader (警告信名单). Agen: Bottom 30% per periode mingguan begitu file tersedia. TL: evaluasi 2 mingguan (1-7 & 8-14, lalu 15-21 & 22-akhir bulan).")
     if not wl_dict:
         st.info("Belum ada file mingguan di folder `rawdata/WarningLetter/` (contoh: `1-7-SK.xlsx`, `8-14-LD.xlsx`, `15-21-SK.xlsx`).")
     else:
@@ -3097,17 +3098,27 @@ with tab_wl:
         df_wl_ag, _ = calculate_warning_letter_data(df_wl_raw, f"Periode {selected_wl_period}")
 
         df_wl_tl = pd.DataFrame()
-        label_tl_period = selected_wl_period
-        if len(wl_period_keys) >= 2:
-            p_idx = wl_period_keys.index(selected_wl_period)
-            pair_start = (p_idx // 2) * 2
-            pair_keys = wl_period_keys[pair_start : pair_start + 2]
+        wl_tl_pending_msg = None
+
+        def _wl_start_day(key):
+            nums = re.findall(r"\d+", str(key))
+            return int(nums[0]) if nums else 0
+
+        # TL dievaluasi 2 minggu sekali: (1-7 & 8-14) lalu (15-21 & 22-akhir bulan)
+        sel_is_first_half = _wl_start_day(selected_wl_period) <= 14
+        pair_keys = [k for k in wl_period_keys if (_wl_start_day(k) <= 14) == sel_is_first_half]
+        pair_label_full = "1-7 & 8-14" if sel_is_first_half else "15-21 & 22-akhir bulan"
+
+        if len(pair_keys) >= 2:
             combined_tl_files = []
             for pk in pair_keys: combined_tl_files.extend(wl_dict.get(pk, []))
             label_tl_period = " & ".join(pair_keys)
             with col_w2: st.info(f"Evaluasi TL 2 Mingguan: Periode **{label_tl_period}**")
             df_wl_tl_raw = process_agent_performance_data(combined_tl_files, [])
             _, df_wl_tl = calculate_warning_letter_data(df_wl_tl_raw, f"2-Minggu ({label_tl_period})")
+        else:
+            wl_tl_pending_msg = f"Evaluasi TL 2 mingguan ({pair_label_full}) menunggu kedua file periode tersedia."
+            with col_w2: st.info(wl_tl_pending_msg)
 
         cols_display_ag = ["Project", "Bucket", "Rank", "ID Agent", "Nama Pengguna", "Nama TL", "Peringkat di Bucket", "Hari Kerja", "Total Penambahan (Periode)", "Total Penerimaan (Periode)", "Recovery Rate (%)", "Status WL"]
         cols_display_tl = ["Project", "Bucket", "Rank", "Nama TL", "Perusahaan", "Peringkat di Bucket", "Total Agent", "Total Penambahan (Periode)", "Total Penerimaan (Periode)", "Recovery Rate (%)", "Status WL"]
@@ -3147,12 +3158,13 @@ with tab_wl:
             if title_text: st.markdown(f'<div class="clean-group-title">{title_text}</div>', unsafe_allow_html=True)
             col_l, col_r = st.columns([1, 1], gap="small")
             with col_l:
-                st.markdown('<div class="section-banner-title">Warning Letter Agent (Bottom 30% — >7 Hari)</div>', unsafe_allow_html=True)
+                st.markdown('<div class="section-banner-title">Warning Letter Agent (Bottom 30%)</div>', unsafe_allow_html=True)
                 if df_target_ag is None or df_target_ag.empty: st.success("Tidak ada agen MPT05 yang terkena Warning Letter di bucket ini.")
                 else: display_full_table(translate_columns(df_target_ag[[c for c in cols_display_ag if c in df_target_ag.columns]]))
             with col_r:
                 st.markdown('<div class="section-banner-title tl">Warning Letter TL (Evaluasi 2 Minggu)</div>', unsafe_allow_html=True)
-                if df_target_tl is None or df_target_tl.empty: st.success("Tidak ada Team Leader MPT05 yang terkena Warning Letter di bucket ini.")
+                if wl_tl_pending_msg: st.info(wl_tl_pending_msg)
+                elif df_target_tl is None or df_target_tl.empty: st.success("Tidak ada Team Leader MPT05 yang terkena Warning Letter di bucket ini.")
                 else: display_full_table(translate_columns(df_target_tl[[c for c in cols_display_tl if c in df_target_tl.columns]]))
 
         for tab_w, (w_label, b_filt, p_filt) in zip(wl_sub_tabs, TARGET_BUCKETS):
