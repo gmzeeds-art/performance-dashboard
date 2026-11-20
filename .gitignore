@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+__MACOSX/
+browser_profile/
+temp_downloads/
+captcha_debug/
+credentials.json
+data_karyawan.xlsx
+Archieve/
